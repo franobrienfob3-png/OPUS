@@ -48,6 +48,7 @@ function pedirLogin() {
 function alRecibirCredencial(resp) {
   guardarToken(resp.credential);
   document.getElementById('login').classList.add('hide');
+  mostrarLoader();
   if (esperandoLogin) { esperandoLogin.resolver(); esperandoLogin = null; }
 }
 
@@ -88,14 +89,16 @@ async function enviar(fn, args) {
 }
 
 async function llamar(fn, ...args) {
-  if (!tokenVigente(TOKEN)) await pedirLogin();
-  try { return await enviar(fn, args); }
-  catch (e) {
-    if (!e.auth) throw e;
-    guardarToken('');
-    await pedirLogin();
-    return enviar(fn, args);
-  }
+  try {
+    if (!tokenVigente(TOKEN)) await pedirLogin();
+    try { return await enviar(fn, args); }
+    catch (e) {
+      if (!e.auth) throw e;
+      guardarToken('');
+      await pedirLogin();
+      return await enviar(fn, args);
+    }
+  } finally { ocultarLoader(); }
 }
 
 const S = { schemas: [], byId: {}, data: {}, rev: [], avisos: [], id: null, q: '', form: null, vista: 'maestros' };
@@ -632,7 +635,16 @@ function ocultarLoader() {
   const l = $('loader');
   if (!l) return;
   l.style.opacity = '0';
-  setTimeout(() => l.remove(), 220);
+  clearTimeout(ocultarLoader.h);
+  ocultarLoader.h = setTimeout(() => l.classList.add('hide'), 220);
+}
+
+function mostrarLoader() {
+  const l = $('loader');
+  if (!l) return;
+  clearTimeout(ocultarLoader.h);
+  l.classList.remove('hide');
+  l.style.opacity = '1';
 }
 
 document.getElementById('salir').onclick = salir;
