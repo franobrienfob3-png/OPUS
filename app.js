@@ -364,7 +364,7 @@ const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
 const I = {};
 function resetImp() {
   Object.assign(I, { a: null, texto: '', dec: {}, filtro: 'todos', q: '', tarjeta: '', historico: true,
-    importarIgual: false, resultado: null, cargando: '', error: '', archivo: null, pideClave: false });
+    importarIgual: false, reemplazar: false, resultado: null, cargando: '', error: '', archivo: null, pideClave: false });
 }
 resetImp();
 
@@ -414,7 +414,8 @@ async function extraerTexto(buffer, clave) {
 }
 
 const textoSugerido = desc => String(desc).split(/\s+C\.\d{2}\/\d{2}|\d{5,}/)[0].trim().slice(0, 28).trim();
-const esSinCat = f => f.clase !== 'pago' && !f.dup && !I.dec[f.i].omitir && !I.dec[f.i].sub && !I.dec[f.i].asig;
+const dupEf = f => f.dup && !I.reemplazar;   // con "reemplazar" lo ya importado vuelve a entrar
+const esSinCat = f => f.clase !== 'pago' && !dupEf(f) && !I.dec[f.i].omitir && !I.dec[f.i].sub && !I.dec[f.i].asig;
 
 function prepararDecisiones() {
   I.dec = {};
@@ -470,6 +471,7 @@ function htmlResultado() {
       '<div class="card kpi"><span class="l">' + k[0] + '</span><span class="v">' + k[1] + '</span></div>').join('') + '</div>' +
     '<p class="mut" style="font-weight:400;margin:16px 0 0">Quedaron guardados en la pestaña <b style="color:var(--text)">Movimientos</b> de tu planilla' +
     (r.historico ? ', marcados como histórico (no cambian saldos).' : '.') +
+    (r.reemplazados ? ' Se reemplazaron ' + r.reemplazados + ' movimientos que ya estaban importados de este resumen.' : '') +
     (r.resumenNuevo ? ' La cabecera del resumen (saldos y lo arrastrado) quedó registrada en la pestaña <b style="color:var(--text)">Resumenes</b>.' : '') + '</p>' +
     '<div style="display:flex;gap:8px;margin-top:20px"><button class="btn primary" id="otro">Importar otro resumen</button>' +
     '<button class="btn" id="verreglas">Ver reglas</button></div></div>';
@@ -493,6 +495,7 @@ function htmlRevision() {
   return '<div class="kpis">' + kpis + '</div>' + htmlOmitidas() +
     '<div class="card opts">' + tarjetas +
     '<label><input type="checkbox" id="hist" ' + (I.historico ? 'checked' : '') + '> Importar como histórico (no cambia saldos)</label>' +
+    (a.filas.some(f => f.dup) ? '<label><input type="checkbox" id="reemp" ' + (I.reemplazar ? 'checked' : '') + '> Reemplazar lo que ya importé de este resumen <span class="mut" style="font-weight:400">(se rehace con las reglas actuales; se pierden los cambios manuales de esos movimientos)</span></label>' : '') +
     (ok ? '' : '<label class="bad"><input type="checkbox" id="igual" ' + (I.importarIgual ? 'checked' : '') + '> Importar igual, aunque no cierre</label>') + '</div>' +
     '<div class="toolbar"><button class="pill ' + (I.filtro === 'todos' ? 'on' : '') + '" data-f="todos">Todos <small>' + a.filas.length + '</small></button>' +
     '<button class="pill ' + (I.filtro === 'sin' ? 'on' : '') + '" data-f="sin" id="chip-sin">Sin categorizar</button>' +
@@ -541,14 +544,14 @@ function filaImp(f) {
   const d = I.dec[f.i];
   const monto = (f.moneda === 'USD' ? 'US$ ' : '$ ') + fmtNum(f.monto);
   const comun = '<td class="mono mut">' + esc(fechaCorta(f.fecha).slice(0, 5)) + '</td><td>' + esc(f.desc) +
-    (f.cuota ? ' <span class="tag">cuota ' + esc(f.cuota) + '</span>' : '') + (f.dup ? ' <span class="tag">ya importado</span>' : '') +
+    (f.cuota ? ' <span class="tag">cuota ' + esc(f.cuota) + '</span>' : '') + (dupEf(f) ? ' <span class="tag">ya importado</span>' : '') +
     '</td><td class="r mono">' + esc(monto) + '</td>';
-  const omitir = '<td><label class="rec"><input type="checkbox" data-k="omitir" ' + (d.omitir ? 'checked' : '') + (f.dup ? ' disabled' : '') + '> Omitir</label></td>';
+  const omitir = '<td><label class="rec"><input type="checkbox" data-k="omitir" ' + (d.omitir ? 'checked' : '') + (dupEf(f) ? ' disabled' : '') + '> Omitir</label></td>';
   if (f.clase === 'pago') {
-    return '<tr class="pago ' + (f.dup ? 'dup' : '') + '" data-i="' + f.i + '">' + comun +
+    return '<tr class="pago ' + (dupEf(f) ? 'dup' : '') + '" data-i="' + f.i + '">' + comun +
       '<td colspan="3"><span class="tag">pago del resumen</span> <span class="mut" style="font-weight:400">se registra como transferencia desde la cuenta de pago</span></td>' + omitir + '</tr>';
   }
-  return '<tr class="' + (f.dup ? 'dup ' : '') + (esSinCat(f) ? 'sin' : '') + '" data-i="' + f.i + '">' + comun +
+  return '<tr class="' + (dupEf(f) ? 'dup ' : '') + (esSinCat(f) ? 'sin' : '') + '" data-i="' + f.i + '">' + comun +
     '<td>' + selSub(f, d.sub) + '</td><td>' + selAsig(d.asig) + '</td>' +
     '<td><label class="rec"><input type="checkbox" data-k="rec" ' + (d.rec ? 'checked' : '') + '> Recordar</label>' +
     '<input class="in ' + (d.rec ? '' : 'hide') + '" data-k="txt" value="' + esc(d.txt) + '" style="margin-top:6px"></td>' + omitir + '</tr>';
@@ -568,7 +571,7 @@ function renderTablaImp() {
 function actualizarContadores() {
   const a = I.a;
   const nSin = a.filas.filter(esSinCat).length;
-  const aImportar = a.filas.filter(f => !I.dec[f.i].omitir && !f.dup).length;
+  const aImportar = a.filas.filter(f => !I.dec[f.i].omitir && !dupEf(f)).length;
   const chip = $('chip-sin'); if (chip) chip.innerHTML = 'Sin categorizar <small>' + nSin + '</small>';
   const b = $('impconf');
   if (b && !b.dataset.busy) {
@@ -585,9 +588,9 @@ async function confirmarImp() {
   const b = $('impconf'); b.dataset.busy = '1'; b.disabled = true; b.textContent = 'Importando…';
   I.error = '';
   try {
-    const res = await llamar('confirmarImportacion', I.texto, I.tarjeta, decisiones, { historico: I.historico, importarIgual: I.importarIgual });
+    const res = await llamar('confirmarImportacion', I.texto, I.tarjeta, decisiones, { historico: I.historico, importarIgual: I.importarIgual, reemplazar: I.reemplazar });
     S.data = res.data; S.rev = res.revisiones; M.movs = null;
-    I.resultado = { importados: res.importados, omitidos: res.omitidos, duplicados: res.duplicados, reglasNuevas: res.reglasNuevas, resumenNuevo: res.resumenNuevo, historico: I.historico };
+    I.resultado = { importados: res.importados, omitidos: res.omitidos, duplicados: res.duplicados, reglasNuevas: res.reglasNuevas, resumenNuevo: res.resumenNuevo, reemplazados: res.reemplazados, historico: I.historico };
   } catch (e) { I.error = (e && e.message) || 'No se pudo importar'; }
   renderImportar();
   if (I.error) window.scrollTo(0, 0);
@@ -615,6 +618,11 @@ function enlazarImportar() {
   if ($('tarjeta')) $('tarjeta').onchange = e => { I.tarjeta = e.target.value; actualizarContadores(); };
   $('hist').onchange = e => { I.historico = e.target.checked; };
   if ($('igual')) $('igual').onchange = e => { I.importarIgual = e.target.checked; actualizarContadores(); };
+  if ($('reemp')) $('reemp').onchange = e => {
+    I.reemplazar = e.target.checked;
+    I.a.filas.forEach(f => { if (f.dup) I.dec[f.i].omitir = !I.reemplazar; });
+    renderTablaImp(); actualizarContadores();
+  };
   $('impconf').onclick = confirmarImp;
   const manejar = e => {
     const tr = e.target.closest('tr'), k = e.target.dataset.k;
