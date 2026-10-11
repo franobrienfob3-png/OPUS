@@ -204,3 +204,22 @@ label.recl { display:flex; gap:8px; align-items:center; color:var(--text-2); cur
 .kpis.cinco { grid-template-columns:repeat(5, minmax(0,1fr)); }
 @media (max-width:1100px) { .kpis.cinco { grid-template-columns:repeat(3, minmax(0,1fr)); } }
 @media (max-width:720px) { .kpis.cinco { grid-template-columns:1fr 1fr; } }
+
+/* Deudas */
+.dgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:12px; }
+.dcard { padding:18px 20px; display:flex; flex-direction:column; gap:4px; }
+.dtop { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+.small { font-size:12.5px; font-weight:400; }
+.grande { font-size:24px; font-weight:600; letter-spacing:-.02em; }
+.barra { height:8px; border-radius:999px; background:var(--surface-2); overflow:hidden; margin:8px 0 4px; }
+.barra i { display:block; height:100%; background:var(--text); border-radius:999px; }
+.seccion { font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:600; margin:6px 0 -6px; }
+
+/* Celular: el menú pasa a una segunda fila para que entren todas las solapas */
+@media (max-width:720px) {
+  .top { flex-wrap:wrap; height:auto; padding:10px 16px 0; row-gap:0; gap:0 8px; }
+  .brand { order:1; height:44px; }
+  .salir { order:2; margin-left:auto; align-self:center; }
+  .tabs { order:3; width:100%; height:44px; }
+  .tab { padding:0 12px; font-size:14px; }
+}

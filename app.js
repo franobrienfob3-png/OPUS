@@ -137,13 +137,14 @@ function celda(m, c, v, f) {
 // ---------- vista ----------
 function renderTabs() {
   const activa = S.vista === 'reglas' ? 'importar' : S.vista;
-  $('tabs').innerHTML = [['maestros', 'DDMM'], ['importar', 'Importar'], ['movs', 'Movimientos']].map(t =>
+  $('tabs').innerHTML = [['maestros', 'DDMM'], ['importar', 'Importar'], ['movs', 'Movimientos'], ['deudas', 'Deudas']].map(t =>
     '<button class="tab ' + (activa === t[0] ? 'on' : '') + '" data-v="' + t[0] + '">' + t[1] + '</button>').join('');
   $('tabs').querySelectorAll('.tab').forEach(b => b.onclick = () => irVista(b.dataset.v));
 }
 
 function irVista(v) {
   S.vista = v; S.q = ''; store.set('vista', v);
+  if (v === 'deudas') D.lista = null;
   if (v === 'maestros' && S.id === 'reglas') S.id = S.schemas.filter(s => s.id !== 'reglas')[0].id;
   if (v === 'reglas') S.id = 'reglas';
   cerrar(); renderTabs(); render();
@@ -152,6 +153,7 @@ function irVista(v) {
 function render() {
   if (S.vista === 'importar') renderImportar();
   else if (S.vista === 'movs') renderMovs();
+  else if (S.vista === 'deudas') renderDeudas();
   else renderPage();
 }
 
@@ -830,13 +832,82 @@ async function borrarMov() {
   } catch (e) { E.borrar = false; $('borrarmov').textContent = 'Eliminar'; mostrarError((e && e.message) || 'No se pudo eliminar'); }
 }
 
+// ---------- Deudas ----------
+const D = { lista: null, hoy: '' };
+const NOMBRE_MON = { ARS: 'pesos', USD: 'dólares', UVA: 'UVAs' };
+const redondeo2 = n => Math.round(n * 100) / 100;
+
+async function cargarDeudas() {
+  mostrarLoader();
+  try { const r = await llamar('listarDeudas'); D.lista = r.deudas; D.hoy = r.hoy; }
+  catch (e) { toast((e && e.message) || 'No se pudieron cargar las deudas'); D.lista = []; }
+  ocultarLoader();
+  if (S.vista === 'deudas') renderDeudas();
+}
+
+function tarjetaDeuda(d) {
+  const pct = d.q ? Math.round(d.pagadas / d.q * 100) : 0;
+  const vto = d.proximo ? 'Próximo vencimiento: ' + fechaCorta(d.proximo) + (d.proximo < D.hoy ? ' (vencido)' : '') : '';
+  return '<div class="card dcard"><div class="dtop"><div><b>' + esc(d.nombre) + '</b><div class="mut small">' + esc(d.acreedor) + ' · ' + esc(d.tipo) + '</div></div>' +
+    (d.tasa ? '<span class="tag">' + esc(fmtNum(d.tasa)) + '% anual</span>' : '') + '</div>' +
+    '<div class="mut small" style="margin-top:12px">' + (d.porCobrar ? 'Te falta cobrar' : 'Te falta pagar') + '</div>' +
+    '<div class="mono grande">' + esc(fmtMoney(d.pendiente, d.moneda)) + '</div>' +
+    '<div class="barra"><i style="width:' + pct + '%"></i></div>' +
+    '<div class="mut small">' + (d.porCobrar ? 'Te pagaron ' : 'Pagaste ') + d.pagadas + ' de ' + d.q + (d.q === 1 ? ' cuota' : ' cuotas') +
+      (d.restantes && d.q > 1 ? ' · faltan ' + d.restantes + ' de ' + esc(fmtMoney(d.valor, d.moneda)) : '') + '</div>' +
+    (vto ? '<div class="mut small">' + esc(vto) + '</div>' : '') +
+    (d.registrados ? '<div class="mut small">Incluye ' + d.registrados + (d.registrados === 1 ? ' pago registrado' : ' pagos registrados') + ' en Movimientos</div>' : '') +
+    '<div style="margin-top:10px"><button class="mini" data-edit="' + d.fila + '">Editar en DDMM</button></div></div>';
+}
+
+function renderDeudas() {
+  if (D.lista === null) { cargarDeudas(); return; }
+  if (!D.lista.length) {
+    $('page').innerHTML = '<div><h1>Deudas</h1></div><div class="card vacio">No hay deudas cargadas. Agregalas en <b style="color:var(--text)">DDMM → Deudas</b>.</div>';
+    return;
+  }
+  const vivas = D.lista.filter(d => d.estado !== 'Inactivo' && !d.finalizada);
+  const cerradas = D.lista.filter(d => d.estado === 'Inactivo' || d.finalizada);
+  const debo = vivas.filter(d => !d.porCobrar).sort((a, b) => b.tasa - a.tasa || b.pendiente - a.pendiente);
+  const cobrar = vivas.filter(d => d.porCobrar).sort((a, b) => b.pendiente - a.pendiente);
+  const suma = (lista, campo) => redondeo2(lista.reduce((s, d) => s + d[campo], 0));
+  const textoPorMoneda = lista => ['ARS', 'USD', 'UVA'].filter(m => lista.some(d => d.moneda === m))
+    .map(m => fmtMoney(suma(lista.filter(d => d.moneda === m), 'pendiente'), m)).join(' + ') || '—';
+  const kpi = (l, v, s, color) => '<div class="card kpi"><span class="l">' + esc(l) + '</span><span class="v" ' + (color ? 'style="color:' + color + '"' : '') + '>' + esc(v) + '</span><span class="s">' + esc(s) + '</span></div>';
+
+  const kpis = ['ARS', 'USD', 'UVA'].filter(m => debo.some(d => d.moneda === m)).map(m => {
+    const l = debo.filter(d => d.moneda === m), cuotas = l.filter(d => d.q > 1 && d.restantes > 0);
+    return kpi('Te falta pagar · ' + NOMBRE_MON[m], fmtMoney(suma(l, 'pendiente'), m),
+      l.length + (l.length === 1 ? ' deuda' : ' deudas') + (cuotas.length ? ' · cuotas de ' + fmtMoney(suma(cuotas, 'valor'), m) + ' por mes' : ''), 'var(--danger)');
+  });
+  if (cobrar.length) kpis.push(kpi('Te falta cobrar', textoPorMoneda(cobrar), cobrar.length + (cobrar.length === 1 ? ' deuda' : ' deudas')));
+
+  const cerradasHtml = cerradas.length
+    ? '<details class="card rev"><summary><span class="n">' + cerradas.length + '</span> terminadas o inactivas</summary><ul>' + cerradas.map(d =>
+      '<li><div class="t"><b>' + esc(d.nombre) + '</b><br><span class="mut">' + (d.finalizada ? 'Pagaste las ' + d.q + (d.q === 1 ? ' cuota' : ' cuotas') : 'Inactiva') +
+      (d.finalizada && d.estado !== 'Inactivo' ? ' · pasala a Inactivo en DDMM para que no figure como activa' : '') + '</span></div>' +
+      '<button class="mini" data-edit="' + d.fila + '">Editar en DDMM</button></li>').join('') + '</ul></details>'
+    : '';
+
+  $('page').innerHTML = '<div><h1>Deudas</h1></div>' +
+    (kpis.length ? '<div class="kpis">' + kpis.join('') + '</div>' : '') +
+    (debo.length ? '<div class="seccion">Lo que debés · de la más cara a la más barata</div><div class="dgrid">' + debo.map(tarjetaDeuda).join('') + '</div>' : '') +
+    (cobrar.length ? '<div class="seccion">Lo que te deben</div><div class="dgrid">' + cobrar.map(tarjetaDeuda).join('') + '</div>' : '') +
+    cerradasHtml;
+
+  $('page').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => {
+    S.vista = 'maestros'; S.id = 'deudas'; S.q = ''; store.set('vista', 'maestros'); store.set('maestro', 'deudas');
+    renderTabs(); renderPage(); abrir(Number(b.dataset.edit));
+  });
+}
+
 // ---------- inicio ----------
 llamar('iniciar').then(r => {
   S.schemas = r.schemas; S.data = r.data; S.rev = r.revisiones; S.avisos = r.avisos;
   S.schemas.forEach(s => { S.byId[s.id] = s; });
   const guardado = store.get('maestro');
   S.id = S.byId[guardado] && guardado !== 'reglas' ? guardado : S.schemas[0].id;
-  S.vista = ['importar', 'movs'].indexOf(store.get('vista')) >= 0 ? store.get('vista') : 'maestros';
+  S.vista = ['importar', 'movs', 'deudas'].indexOf(store.get('vista')) >= 0 ? store.get('vista') : 'maestros';
   renderTabs(); render();
   ocultarLoader();
 }).catch(e => {
