@@ -467,7 +467,8 @@ function htmlResultado() {
     [['Importados', r.importados], ['Omitidos', r.omitidos], ['Ya estaban', r.duplicados], ['Reglas nuevas', r.reglasNuevas]].map(k =>
       '<div class="card kpi"><span class="l">' + k[0] + '</span><span class="v">' + k[1] + '</span></div>').join('') + '</div>' +
     '<p class="mut" style="font-weight:400;margin:16px 0 0">Quedaron guardados en la pestaña <b style="color:var(--text)">Movimientos</b> de tu planilla' +
-    (r.historico ? ', marcados como histórico (no cambian saldos).' : '.') + '</p>' +
+    (r.historico ? ', marcados como histórico (no cambian saldos).' : '.') +
+    (r.resumenNuevo ? ' La cabecera del resumen (saldos y lo arrastrado) quedó registrada en la pestaña <b style="color:var(--text)">Resumenes</b>.' : '') + '</p>' +
     '<div style="display:flex;gap:8px;margin-top:20px"><button class="btn primary" id="otro">Importar otro resumen</button>' +
     '<button class="btn" id="verreglas">Ver reglas</button></div></div>';
 }
@@ -476,7 +477,7 @@ function htmlRevision() {
   const a = I.a, r = a.resumen, ok = r.controles.ok;
   const kpis = [
     ['Cierre', fechaCorta(r.cierre), 'Vence ' + fechaCorta(r.vencimiento), ''],
-    ['Saldo del resumen', '$ ' + fmtNum(r.saldoActual.ars), 'US$ ' + fmtNum(r.saldoActual.usd), ''],
+    ['Saldo del resumen', fmtMoney(r.saldoActual.ars, 'ARS'), fmtMoney(r.saldoActual.usd, 'USD') + ' · de lo anterior sin pagar: ' + fmtMoney(r.arrastrado.ars, 'ARS'), ''],
     ['Pago mínimo', '$ ' + fmtNum(r.pagoMinimo), a.filas.length + ' renglones leídos', ''],
     ['Controles', ok ? 'Cierran ✓' : 'No cierran ✗', ok ? 'Consumos y saldo coinciden con el resumen' : 'Revisá antes de importar', ok ? 'ok' : 'bad'],
   ].map(k => '<div class="card kpi"><span class="l">' + k[0] + '</span><span class="v ' + k[3] + '">' + esc(k[1]) + '</span><span class="s">' + esc(k[2]) + '</span></div>').join('');
@@ -584,7 +585,7 @@ async function confirmarImp() {
   try {
     const res = await llamar('confirmarImportacion', I.texto, I.tarjeta, decisiones, { historico: I.historico, importarIgual: I.importarIgual });
     S.data = res.data; S.rev = res.revisiones; M.movs = null;
-    I.resultado = { importados: res.importados, omitidos: res.omitidos, duplicados: res.duplicados, reglasNuevas: res.reglasNuevas, historico: I.historico };
+    I.resultado = { importados: res.importados, omitidos: res.omitidos, duplicados: res.duplicados, reglasNuevas: res.reglasNuevas, resumenNuevo: res.resumenNuevo, historico: I.historico };
   } catch (e) { I.error = (e && e.message) || 'No se pudo importar'; }
   renderImportar();
   if (I.error) window.scrollTo(0, 0);
