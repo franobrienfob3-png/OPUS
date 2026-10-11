@@ -141,7 +141,7 @@ function celda(m, c, v, f) {
 // ---------- vista ----------
 function renderTabs() {
   const activa = (S.vista === 'reglas' || S.vista === 'importar') ? 'resumenes' : S.vista;
-  $('tabs').innerHTML = [['cargar', 'Cargar'], ['movs', 'Movimientos'], ['deudas', 'Deudas'], ['resumenes', 'Resúmenes'], ['maestros', 'DDMM']].map(t =>
+  $('tabs').innerHTML = [['dashboard', 'Dashboard'], ['cargar', 'Cargar'], ['movs', 'Movimientos'], ['deudas', 'Deudas'], ['resumenes', 'Resúmenes'], ['maestros', 'DDMM']].map(t =>
     '<button class="tab ' + (activa === t[0] ? 'on' : '') + '" data-v="' + t[0] + '">' + t[1] + '</button>').join('');
   $('tabs').querySelectorAll('.tab').forEach(b => b.onclick = () => irVista(b.dataset.v));
 }
@@ -149,6 +149,7 @@ function renderTabs() {
 function irVista(v) {
   S.vista = v; S.q = ''; store.set('vista', v);
   if (v === 'deudas') D.lista = null;
+  if (v === 'dashboard') DB.movs = null;
   if (v === 'resumenes') { R.lista = null; R.sel = ''; }
   if (v === 'cargar') { C.recientes = null; reiniciarCarga(true); }
   if (v === 'maestros' && S.id === 'reglas') S.id = S.schemas.filter(s => s.id !== 'reglas')[0].id;
@@ -162,6 +163,7 @@ function render() {
   else if (S.vista === 'deudas') renderDeudas();
   else if (S.vista === 'cargar') renderCargar();
   else if (S.vista === 'resumenes') renderResumenes();
+  else if (S.vista === 'dashboard') renderDashboard();
   else renderPage();
 }
 
@@ -1143,13 +1145,243 @@ function renderDetalleResumen(r) {
   $('volverlista').onclick = () => { R.sel = ''; renderResumenes(); window.scrollTo(0, 0); };
 }
 
+// ---------- Dashboard ----------
+const DB = { movs: null, deudas: [], res: [], hoy: '', periodo: '' };
+
+async function cargarDashboard() {
+  mostrarLoader();
+  const seguro = async (fn, vacio) => { try { return await llamar(fn); } catch (e) { return vacio; } };
+  try {
+    const m = await llamar('listarMovimientos');
+    const d = await seguro('listarDeudas', { deudas: [], hoy: '' });
+    const r = await seguro('listarResumenes', { resumenes: [] });
+    DB.movs = m.movimientos; DB.deudas = d.deudas; DB.hoy = d.hoy || hoyLocal(); DB.res = r.resumenes;
+    const meses = mesesDe(DB.movs.filter(x => x.tipo === 'Gasto' || x.tipo === 'Ingreso'));
+    if (DB.periodo !== 'todo' && DB.periodo !== 'anio' && meses.indexOf(DB.periodo) < 0) DB.periodo = meses[0] || 'todo';
+  } catch (e) { toast((e && e.message) || 'No se pudo armar el dashboard'); DB.movs = []; }
+  ocultarLoader();
+  if (S.vista === 'dashboard') renderDashboard();
+}
+
+const mesAnterior = ym => { let a = Number(ym.slice(0, 4)), m = Number(ym.slice(5, 7)) - 1; if (m < 1) { m = 12; a--; } return a + '-' + ('0' + m).slice(-2); };
+const dosMon = (ars, usd) => fmtMoney(ars, 'ARS') + (usd ? '  ·  ' + fmtMoney(usd, 'USD') : '');
+const porc = (a, b) => b ? Math.round(a / b * 100) : 0;
+
+/** Saldo de cada cuenta: lo que sumaron o restaron los movimientos que afectan saldo (ajustes incluidos). */
+function saldosCuentas() {
+  const cuentas = {};
+  S.data.cuentas.filas.forEach(f => { cuentas[f.v.Nombre] = { nombre: f.v.Nombre, moneda: f.v.Moneda, estado: f.v.Estado, saldo: 0, mov: 0 }; });
+  let hayAjuste = false;
+  DB.movs.forEach(m => {
+    if (m.afecta !== 'Si') return;
+    const o = cuentas[m.cuenta], d = cuentas[m.destino];
+    if (m.tipo === 'Ajuste') hayAjuste = true;
+    if (m.tipo === 'Ingreso' || m.tipo === 'Cobro Deuda' || m.tipo === 'Ajuste') { if (o) { o.saldo += m.monto; o.mov++; } }
+    else if (m.tipo === 'Gasto' || m.tipo === 'Pago Deuda') { if (o) { o.saldo -= m.monto; o.mov++; } }
+    else if (m.tipo === 'Transferencia') {
+      if (o) { o.saldo -= m.monto; o.mov++; }
+      if (d) { d.saldo += Number(m.montoDestino) || m.monto; d.mov++; }
+    }
+  });
+  const lista = Object.keys(cuentas).map(k => cuentas[k]).filter(c => c.estado !== 'Inactivo' || c.mov);
+  const total = { ARS: 0, USD: 0 };
+  lista.forEach(c => { total[c.moneda] = (total[c.moneda] || 0) + c.saldo; });
+  return { lista, total, hayAjuste };
+}
+
+/** Lo que falta pagar de la tarjeta: saldo del último resumen menos los pagos cargados después del cierre. */
+function tarjetaPendiente() {
+  const r = DB.res[0];
+  if (!r) return null;
+  const nombres = S.data.tarjetas.filas.filter(f => String(f.v['N° Tarjeta']) === String(r.tarjeta)).map(f => f.v.Nombre);
+  const pagado = { ARS: 0, USD: 0 };
+  DB.movs.forEach(m => { if (m.tipo === 'Transferencia' && nombres.indexOf(m.destino) >= 0 && m.fecha > r.cierre) pagado[m.moneda] = (pagado[m.moneda] || 0) + (Number(m.montoDestino) || m.monto); });
+  const ars = Math.max(0, r.saldoActual.ars - pagado.ARS), usd = Math.max(0, r.saldoActual.usd - pagado.USD);
+  const dias = r.vencimiento ? Math.round((new Date(r.vencimiento + 'T00:00:00') - new Date(DB.hoy + 'T00:00:00')) / 86400000) : null;
+  return { r, ars, usd, pagado, dias };
+}
+
+/** Cuotas de tarjeta que ya están comprometidas hacia adelante (según el último resumen). */
+function cuotasFuturas() {
+  const r = DB.res[0];
+  const o = { prox: { ARS: 0, USD: 0 }, total: { ARS: 0, USD: 0 }, n: 0, lista: [] };
+  if (!r) return o;
+  DB.movs.filter(m => m.origen === r.origen && (m.tipo === 'Gasto' || m.tipo === 'Adelanto') && /^\d+\/\d+$/.test(m.cuota)).forEach(m => {
+    const p = m.cuota.split('/'), faltan = Number(p[1]) - Number(p[0]);
+    if (faltan <= 0) return;
+    o.prox[m.moneda] = (o.prox[m.moneda] || 0) + m.monto;
+    o.total[m.moneda] = (o.total[m.moneda] || 0) + m.monto * faltan;
+    o.n++; o.lista.push({ desc: m.desc.replace(/\s+C\.\d{2}\/\d{2}.*/, ''), faltan, monto: m.monto, moneda: m.moneda, adelanto: m.tipo === 'Adelanto' });
+  });
+  o.lista.sort((a, b) => b.monto * b.faltan - a.monto * a.faltan);
+  return o;
+}
+
+function barra(pct, rojo) {
+  return '<div class="barra"><i style="width:' + Math.min(100, Math.max(0, pct)) + '%;' + (rojo ? 'background:var(--accent)' : '') + '"></i></div>';
+}
+
+function renderDashboard() {
+  if (DB.movs === null) { cargarDashboard(); return; }
+  const util = DB.movs.filter(m => m.tipo === 'Gasto' || m.tipo === 'Ingreso');
+  const sal = saldosCuentas(), tj = tarjetaPendiente(), cf = cuotasFuturas();
+  if (!util.length && !sal.lista.some(c => c.mov)) {
+    $('page').innerHTML = '<div><h1>Dashboard</h1></div><div class="card vacio">Todavía no hay movimientos para mostrar. Importá un resumen en <b style="color:var(--text)">Resúmenes</b> o cargá algo en <b style="color:var(--text)">Cargar</b>.</div>';
+    return;
+  }
+  const meses = mesesDe(util), anio = (meses[0] || DB.hoy).slice(0, 4);
+  const { cat: catDe, nat: natDe } = mapasGastos();
+  const fvDe = {}; S.data.gastos.filas.forEach(f => { fvDe[f.v.Subcategoria] = f.v['Fijo/Variable']; });
+  const enPer = (m, per) => per === 'todo' ? true : per === 'anio' ? m.fecha.slice(0, 4) === anio : m.fecha.slice(0, 7) === per;
+  const per = DB.periodo;
+  const base = util.filter(m => enPer(m, per));
+  const suma = (lista, tipo, mon) => lista.filter(m => m.tipo === tipo && m.moneda === mon).reduce((s, m) => s + m.monto, 0);
+  const ing = { ARS: suma(base, 'Ingreso', 'ARS'), USD: suma(base, 'Ingreso', 'USD') };
+  const gas = { ARS: suma(base, 'Gasto', 'ARS'), USD: suma(base, 'Gasto', 'USD') };
+  const ahorro = { ARS: ing.ARS - gas.ARS, USD: ing.USD - gas.USD };
+  const gARS = base.filter(m => m.tipo === 'Gasto' && m.moneda === 'ARS');
+  const nMeses = Math.max(1, new Set(base.map(m => m.fecha.slice(0, 7))).size);
+  const esMes = per !== 'todo' && per !== 'anio';
+  const previo = esMes ? util.filter(m => m.fecha.slice(0, 7) === mesAnterior(per)) : [];
+  const gPrevio = suma(previo, 'Gasto', 'ARS');
+
+  // patrimonio estimado (cada moneda por separado, sin convertir)
+  const deudasAct = DB.deudas.filter(d => d.estado !== 'Inactivo' && !d.finalizada);
+  const sumD = (porCobrar, mon) => deudasAct.filter(d => d.porCobrar === porCobrar && d.moneda === mon).reduce((s, d) => s + d.pendiente, 0);
+  const deuda = { ARS: sumD(false, 'ARS'), USD: sumD(false, 'USD'), UVA: sumD(false, 'UVA') };
+  const cobrar = { ARS: sumD(true, 'ARS'), USD: sumD(true, 'USD') };
+  const tjAR = tj ? tj.ars : 0, tjUS = tj ? tj.usd : 0;
+  const pat = { ARS: sal.total.ARS + cobrar.ARS - tjAR - deuda.ARS, USD: sal.total.USD + cobrar.USD - tjUS - deuda.USD };
+
+  // categorías
+  const porCat = {};
+  gARS.forEach(m => { const c = catDe[m.subcategoria] || 'Otros'; porCat[c] = (porCat[c] || 0) + m.monto; });
+  let cats = Object.keys(porCat).map(n => ({ n, total: porCat[n] })).sort((a, b) => b.total - a.total);
+  if (cats.length > 7) { const resto = cats.slice(6); cats = cats.slice(0, 6).concat([{ n: 'Otras', total: resto.reduce((s, c) => s + c.total, 0) }]); }
+  cats.forEach((c, i) => { c.color = COLORES_CAT[Math.min(i, COLORES_CAT.length - 1)]; });
+  let acum = 0;
+  const donut = gas.ARS ? 'conic-gradient(' + cats.map(c => { const a = acum; acum += c.total / gas.ARS * 100; return c.color + ' ' + a + '% ' + acum + '%'; }).join(',') + ')' : 'var(--surface-2)';
+
+  const grupo = (clave, valores) => valores.map(v => ({ n: v, total: gARS.filter(m => clave(m) === v).reduce((s, m) => s + m.monto, 0) })).filter(x => x.total > 0);
+  const naturaleza = grupo(m => natDe[m.subcategoria] || 'Sin definir', ['Necesidad', 'Prescindible', 'Deuda', 'Sin definir']);
+  const fijoVar = grupo(m => fvDe[m.subcategoria] || 'Variable', ['Fijo', 'Variable']);
+  const sinCat = base.filter(m => m.tipo === 'Gasto' && !m.subcategoria).length;
+  const costoDeuda = naturaleza.filter(x => x.n === 'Deuda').reduce((s, x) => s + x.total, 0);
+
+  // presupuesto
+  const pres = S.data.presupuesto.filas.map(f => ({ sub: f.v.Subcategoria, tope: (Number(f.v.Presupuesto) || 0) * nMeses })).filter(p => p.tope > 0)
+    .map(p => { const real = gARS.filter(m => m.subcategoria === p.sub).reduce((s, m) => s + m.monto, 0); return Object.assign(p, { real, pct: porc(real, p.tope) }); })
+    .sort((a, b) => b.pct - a.pct);
+  const presTope = pres.reduce((s, p) => s + p.tope, 0), presReal = pres.reduce((s, p) => s + p.real, 0);
+
+  // evolución de los últimos 6 meses con datos
+  const ult = meses.slice(0, 6).reverse().map(ym => {
+    const l = util.filter(m => m.fecha.slice(0, 7) === ym);
+    return { ym, i: suma(l, 'Ingreso', 'ARS'), g: suma(l, 'Gasto', 'ARS') };
+  });
+  const maxEv = Math.max(1, ...ult.map(x => Math.max(x.i, x.g)));
+
+  // para mirar
+  const avisos = [];
+  if (!sal.hayAjuste) avisos.push('Todavía no cargaste los saldos iniciales de tus cuentas: usá Cargar → Ajuste (nota “Saldo inicial”) para que el patrimonio sea real.');
+  if (tj && tj.dias !== null && tj.ars > 0) {
+    const cuando = tj.dias < 0 ? 'venció hace ' + (-tj.dias) + ' días' : tj.dias === 0 ? 'vence hoy' : 'vence en ' + tj.dias + ' días';
+    avisos.push('La tarjeta ' + cuando + ': falta pagar ' + fmtMoney(tj.ars, 'ARS') + (tj.usd ? ' y ' + fmtMoney(tj.usd, 'USD') : '') + (sal.hayAjuste && sal.total.ARS < tj.ars ? ' (tus cuentas en pesos hoy no alcanzan)' : '') + '.');
+  }
+  pres.filter(p => p.pct > 100).slice(0, 3).forEach(p => avisos.push('Te pasaste del presupuesto de ' + p.sub + ': ' + p.pct + '% (' + fmtMoney(p.real, 'ARS') + ' de ' + fmtMoney(p.tope, 'ARS') + ').'));
+  if (esMes && gPrevio) { const v = Math.round((gas.ARS - gPrevio) / gPrevio * 100); avisos.push('Gastaste ' + (v >= 0 ? v + '% más' : (-v) + '% menos') + ' que en ' + nombreMes(mesAnterior(per)) + '.'); }
+  const presc = naturaleza.filter(x => x.n === 'Prescindible').reduce((s, x) => s + x.total, 0);
+  if (gas.ARS && presc) avisos.push('El ' + porc(presc, gas.ARS) + '% de tus gastos en pesos es prescindible (' + fmtMoney(presc, 'ARS') + '): ahí es donde más fácil se recorta.');
+  if (costoDeuda) avisos.push('Pagaste ' + fmtMoney(costoDeuda, 'ARS') + ' en intereses, comisiones y cuotas de préstamos.');
+  if (cf.total.ARS) avisos.push('Ya tenés comprometidos ' + fmtMoney(cf.total.ARS, 'ARS') + ' en cuotas de tarjeta hacia adelante (' + fmtMoney(cf.prox.ARS, 'ARS') + ' en el próximo resumen).');
+  if (sinCat) avisos.push(sinCat + ' gastos sin categorizar en este período: asignales una categoría en Movimientos.');
+
+  const kpi = (l, v, s, color) => '<div class="card kpi"><span class="l">' + l + '</span><span class="v" ' + (color ? 'style="color:' + color + '"' : '') + '>' + esc(v) + '</span><span class="s">' + esc(s) + '</span></div>';
+  const tasa = ing.ARS ? porc(ahorro.ARS, ing.ARS) : null;
+  const kpis = '<div class="kpis cinco">' +
+    kpi('Ingresos', fmtMoney(ing.ARS, 'ARS'), ing.USD ? fmtMoney(ing.USD, 'USD') : 'en pesos') +
+    kpi('Gastos', fmtMoney(gas.ARS, 'ARS'), gas.USD ? fmtMoney(gas.USD, 'USD') + ' en dólares' : (esMes && gPrevio ? (gas.ARS >= gPrevio ? '▲ ' : '▼ ') + Math.abs(porc(gas.ARS - gPrevio, gPrevio)) + '% vs mes anterior' : 'en pesos'), 'var(--danger)') +
+    kpi('Ahorro del período', (ahorro.ARS < 0 ? '− ' : '') + fmtMoney(Math.abs(ahorro.ARS), 'ARS'), tasa === null ? 'sin ingresos cargados' : tasa + '% de lo que ingresó') +
+    kpi('Patrimonio estimado', (pat.ARS < 0 ? '− ' : '') + fmtMoney(Math.abs(pat.ARS), 'ARS'), 'en pesos · ' + (pat.USD < 0 ? '− ' : '') + fmtMoney(Math.abs(pat.USD), 'USD')) +
+    kpi('Deuda de tarjeta', tj ? fmtMoney(tj.ars, 'ARS') : '—', tj ? (tj.usd ? fmtMoney(tj.usd, 'USD') + ' · ' : '') + 'pago mínimo ' + fmtMoney(tj.r.pagoMinimo, 'ARS') : 'sin resúmenes importados') + '</div>';
+
+  const periodos = '<select class="in" id="dbper" style="width:auto;margin:0">' + meses.slice(0, 12).map(ym => op(ym, per, nombreMes(ym))).join('') +
+    op('anio', per, 'Año ' + anio) + op('todo', per, 'Todo') + '</select>';
+
+  const card = (titulo, html, extra) => '<div class="card cuerpo-c ' + (extra || '') + '"><h2 class="titulo-c">' + titulo + '</h2>' + html + '</div>';
+  const fila = (a, b, c) => '<div class="dfila"><span class="n">' + a + '</span>' + (c || '') + '<span class="mono">' + b + '</span></div>';
+  const grupoHtml = lista => lista.length ? lista.map(x => '<div class="dgr"><div class="dfila"><span class="n">' + esc(x.n) + '</span><span class="mono mut">' + porc(x.total, gas.ARS) + '%</span><span class="mono">' + esc(fmtMoney(x.total, 'ARS')) + '</span></div>' + barra(porc(x.total, gas.ARS)) + '</div>').join('') : '<div class="mut" style="font-weight:400">Sin datos</div>';
+
+  const evolucion = ult.length ? '<div class="evol">' + ult.map(x => '<div class="evcol"><div class="evbars"><i class="ing" style="height:' + Math.round(x.i / maxEv * 100) + '%" title="Ingresos"></i><i class="gas" style="height:' + Math.round(x.g / maxEv * 100) + '%" title="Gastos"></i></div>' +
+    '<span class="mut small">' + esc(MESES_CORTO[Number(x.ym.slice(5, 7)) - 1]) + '</span><span class="mono small ' + (x.i - x.g < 0 ? 'neg' : '') + '">' + (x.i - x.g < 0 ? '−' : '') + esc(fmtNum(Math.round(Math.abs(x.i - x.g) / 1000))) + 'k</span></div>').join('') + '</div>' +
+    '<div class="mut small" style="margin-top:8px"><span class="sw ing"></span> Ingresos &nbsp; <span class="sw gas"></span> Gastos &nbsp; · debajo de cada mes: lo que sobró o faltó, en miles de pesos</div>' : '';
+
+  const presHtml = pres.length
+    ? '<div class="dfila" style="margin-bottom:10px"><span class="n"><b>Total</b></span><span class="mono mut">' + porc(presReal, presTope) + '%</span><span class="mono">' + esc(fmtMoney(presReal, 'ARS')) + ' / ' + esc(fmtMoney(presTope, 'ARS')) + '</span></div>' + barra(porc(presReal, presTope), presReal > presTope) +
+      '<div style="margin-top:14px">' + pres.map(p => '<div class="dgr"><div class="dfila"><span class="n">' + esc(p.sub) + '</span><span class="mono ' + (p.pct > 100 ? 'bad' : 'mut') + '">' + p.pct + '%</span><span class="mono">' + esc(fmtMoney(p.real, 'ARS')) + ' / ' + esc(fmtMoney(p.tope, 'ARS')) + '</span></div>' + barra(p.pct, p.pct > 100) + '</div>').join('') + '</div>'
+    : '<div class="mut" style="font-weight:400">No hay presupuestos cargados. Definilos en DDMM → Presupuesto.</div>';
+
+  const cuentasHtml = sal.lista.map(c => fila(esc(c.nombre) + (c.nombre.slice(-3) === c.moneda ? '' : ' <span class="mut small">' + esc(c.moneda) + '</span>'), (c.saldo < 0 ? '− ' : '') + esc(fmtMoney(Math.abs(c.saldo), c.moneda)), '')).join('') +
+    '<div class="dfila total"><span class="n"><b>Total en cuentas</b></span><span class="mono">' + esc(dosMon(sal.total.ARS, sal.total.USD)) + '</span></div>';
+
+  const patHtml = fila('En cuentas', esc(dosMon(sal.total.ARS, sal.total.USD))) +
+    fila('Te deben', esc(dosMon(cobrar.ARS, cobrar.USD))) +
+    fila('Tarjeta por pagar', '− ' + esc(dosMon(tjAR, tjUS))) +
+    fila('Deudas pendientes', '− ' + esc(fmtMoney(deuda.ARS, 'ARS') + (deuda.USD ? '  ·  ' + fmtMoney(deuda.USD, 'USD') : ''))) +
+    (deuda.UVA ? fila('Deuda en UVA <span class="mut small">(no se suma)</span>', esc(fmtMoney(deuda.UVA, 'UVA'))) : '') +
+    '<div class="dfila total"><span class="n"><b>Patrimonio estimado</b></span><span class="mono">' + (pat.ARS < 0 ? '− ' : '') + esc(fmtMoney(Math.abs(pat.ARS), 'ARS')) + '  ·  ' + (pat.USD < 0 ? '− ' : '') + esc(fmtMoney(Math.abs(pat.USD), 'USD')) + '</span></div>';
+
+  const prox = deudasAct.filter(d => d.proximo).sort((a, b) => a.proximo < b.proximo ? -1 : 1).slice(0, 6);
+  const diasA = iso => Math.round((new Date(iso + 'T00:00:00') - new Date(DB.hoy + 'T00:00:00')) / 86400000);
+  const deudasHtml = prox.length ? prox.map(d => fila(esc(d.nombre) + ' <span class="mut small">' + (d.porCobrar ? 'te pagan' : 'pagás') + ' · ' + esc(fechaCorta(d.proximo).slice(0, 5)) + ' (' + (diasA(d.proximo) <= 0 ? 'hoy' : 'en ' + diasA(d.proximo) + ' d') + ')</span>', esc(fmtMoney(d.valor, d.moneda)))).join('') +
+    '<div class="dfila total"><span class="n"><b>Cuotas por mes</b> <span class="mut small">(de deudas activas, sin UVA)</span></span><span class="mono">' + esc(dosMon(deudasAct.filter(d => !d.porCobrar && d.moneda === 'ARS').reduce((s, d) => s + d.valor, 0), deudasAct.filter(d => !d.porCobrar && d.moneda === 'USD').reduce((s, d) => s + d.valor, 0))) + '</span></div>'
+    : '<div class="mut" style="font-weight:400">No hay deudas activas con vencimiento.</div>';
+
+  const tjHtml = tj ? fila('Resumen del ' + esc(fechaCorta(tj.r.cierre)), esc(dosMon(tj.r.saldoActual.ars, tj.r.saldoActual.usd))) +
+    fila('Pagos cargados después', '− ' + esc(dosMon(tj.pagado.ARS || 0, tj.pagado.USD || 0))) +
+    '<div class="dfila total"><span class="n"><b>Falta pagar</b></span><span class="mono">' + esc(dosMon(tj.ars, tj.usd)) + '</span></div>' +
+    fila('Vencimiento', esc(tj.r.vencimiento ? fechaCorta(tj.r.vencimiento) + (tj.dias !== null ? ' (' + (tj.dias < 0 ? 'hace ' + (-tj.dias) + ' d' : tj.dias === 0 ? 'hoy' : 'en ' + tj.dias + ' d') + ')' : '') : '—')) +
+    fila('Arrastrado de antes', esc(fmtMoney(tj.r.arrastrado.ars, 'ARS'))) +
+    '<div class="mut small" style="margin-top:8px">Los pagos se toman de Cargar → Pago de tarjeta.</div>'
+    : '<div class="mut" style="font-weight:400">Importá un resumen para ver la deuda de la tarjeta.</div>';
+
+  const cuotasHtml = cf.n ? fila('Próximo resumen', esc(dosMon(cf.prox.ARS, cf.prox.USD))) + fila('Total hasta terminarlas', esc(dosMon(cf.total.ARS, cf.total.USD))) +
+    '<div style="margin-top:10px">' + cf.lista.slice(0, 5).map(x => fila(esc(x.desc) + ' <span class="mut small">faltan ' + x.faltan + (x.adelanto ? ' · adelanto' : '') + '</span>', esc(fmtMoney(x.monto * x.faltan, x.moneda)))).join('') + '</div>'
+    : '<div class="mut" style="font-weight:400">No hay cuotas pendientes en el último resumen.</div>';
+
+  const top = gARS.slice().sort((a, b) => b.monto - a.monto).slice(0, 6);
+  const topHtml = top.length ? top.map(m => fila(esc(m.desc) + ' <span class="mut small">' + esc(fechaCorta(m.fecha).slice(0, 5)) + (m.subcategoria ? ' · ' + esc(m.subcategoria) : '') + '</span>', esc(fmtMoney(m.monto, 'ARS')))).join('') : '<div class="mut" style="font-weight:400">Sin gastos en este período</div>';
+
+  const leyenda = cats.map(c => '<div class="leg"><span class="sw" style="background:' + c.color + '"></span><span class="n">' + esc(c.n) + '</span><span class="mono">' + esc(fmtMoney(c.total, 'ARS')) + '</span><span class="mono mut pc">' + porc(c.total, gas.ARS) + '%</span></div>').join('');
+  const catHtml = '<div class="donutbox chico"><div class="donut" style="background:' + donut + '"><div class="hole"><span class="mut" style="font-size:12px;font-weight:400">Gastos</span><span class="mono" style="font-size:15px;font-weight:600">' + esc(fmtMoney(gas.ARS, 'ARS')) + '</span></div></div><div class="legend">' + (leyenda || '<div class="mut" style="font-weight:400">Sin gastos en pesos</div>') + '</div></div>';
+
+  $('page').innerHTML =
+    '<div class="titulo-fila"><h1>Dashboard</h1>' + periodos + '</div>' + kpis +
+    (avisos.length ? card('Para mirar', '<ul class="avisos">' + avisos.map(a => '<li>' + esc(a) + '</li>').join('') + '</ul>') : '') +
+    '<div class="dgrid">' +
+    card('Ingresos y gastos por mes', evolucion || '<div class="mut" style="font-weight:400">Sin datos</div>', 'ancho') +
+    card('En qué se va la plata', catHtml) +
+    card('Presupuesto vs real' + (nMeses > 1 ? ' <span class="mut" style="text-transform:none;letter-spacing:0">(' + nMeses + ' meses)</span>' : ''), presHtml) +
+    card('Necesidad, prescindible y deuda', grupoHtml(naturaleza)) +
+    card('Gastos fijos y variables', grupoHtml(fijoVar)) +
+    card('Mayores gastos del período', topHtml) +
+    card('Patrimonio estimado', patHtml) +
+    card('Saldo por cuenta', cuentasHtml + (sal.hayAjuste ? '' : '<div class="mut small" style="margin-top:8px">Sin saldos iniciales: los saldos reflejan solo lo cargado.</div>')) +
+    card('Tarjeta de crédito', tjHtml) +
+    card('Cuotas de tarjeta comprometidas', cuotasHtml) +
+    card('Próximos pagos de deudas', deudasHtml) +
+    '</div>' +
+    '<div class="mut small" style="max-width:760px">El patrimonio es una estimación: suma tus cuentas (según los movimientos que cargaste) y lo que te deben, y resta la tarjeta y las deudas pendientes. Cada moneda va por separado, sin convertir.</div>';
+  $('dbper').onchange = e => { DB.periodo = e.target.value; renderDashboard(); };
+}
+
 // ---------- inicio ----------
 llamar('iniciar').then(r => {
   S.schemas = r.schemas; S.data = r.data; S.rev = r.revisiones; S.avisos = r.avisos;
   S.schemas.forEach(s => { S.byId[s.id] = s; });
   const guardado = store.get('maestro');
   S.id = S.byId[guardado] && guardado !== 'reglas' ? guardado : S.schemas[0].id;
-  S.vista = ['resumenes', 'movs', 'deudas', 'cargar', 'maestros'].indexOf(store.get('vista')) >= 0 ? store.get('vista') : 'cargar';
+  S.vista = ['dashboard', 'resumenes', 'movs', 'deudas', 'cargar', 'maestros'].indexOf(store.get('vista')) >= 0 ? store.get('vista') : 'dashboard';
   renderTabs(); render();
   ocultarLoader();
 }).catch(e => {

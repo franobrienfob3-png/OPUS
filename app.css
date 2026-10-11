@@ -238,3 +238,30 @@ label.recl { display:flex; gap:8px; align-items:center; color:var(--text-2); cur
 /* Resúmenes */
 .fila-res { cursor:pointer; }
 .fila-res:hover td { background:var(--surface-2); }
+
+/* Dashboard */
+.small { font-size:12px; font-weight:400; }
+.dgrid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px; }
+.dgrid .ancho { grid-column:1 / -1; }
+.dgrid .card { min-width:0; }
+.dfila { display:flex; align-items:baseline; gap:10px; padding:7px 0; border-top:1px solid var(--border-row); font-size:14px; }
+.dfila:first-of-type { border-top:0; }
+.dfila .n { flex:1; min-width:0; overflow-wrap:anywhere; }
+.dfila .mono { white-space:nowrap; text-align:right; }
+.dfila.total { border-top:1px solid var(--border-strong); margin-top:4px; padding-top:10px; }
+.dgr { margin-bottom:10px; }
+.dgr .dfila { border-top:0; padding:3px 0; }
+.barra { height:6px; background:var(--surface-2); border-radius:4px; overflow:hidden; }
+.barra i { display:block; height:100%; background:var(--text); border-radius:4px; }
+.avisos { margin:0; padding-left:18px; display:flex; flex-direction:column; gap:8px; font-weight:400; line-height:1.45; }
+.evol { display:flex; gap:10px; align-items:flex-end; height:190px; }
+.evcol { flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; height:100%; min-width:0; }
+.evbars { flex:1; width:100%; display:flex; align-items:flex-end; justify-content:center; gap:4px; }
+.evbars i { display:block; width:42%; max-width:26px; min-height:2px; border-radius:4px 4px 0 0; }
+.sw.ing, .evbars i.ing { background:var(--text); }
+.sw.gas, .evbars i.gas { background:var(--accent); }
+.sw { display:inline-block; width:10px; height:10px; border-radius:3px; vertical-align:middle; }
+.donutbox.chico { padding:0; grid-template-columns:170px 1fr; gap:20px; }
+.donutbox.chico .donut { width:160px; height:160px; }
+.donutbox.chico .donut .hole { inset:22px; }
+@media (max-width:900px) { .dgrid { grid-template-columns:1fr; } .donutbox.chico { grid-template-columns:1fr; justify-items:center; } }
