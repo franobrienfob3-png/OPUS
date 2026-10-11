@@ -234,3 +234,7 @@ label.recl { display:flex; gap:8px; align-items:center; color:var(--text-2); cur
 .pend > div:first-child, .rec-fila > div:first-child { flex:1; }
 .rec-desc { font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 @media (max-width:720px) { .seg { flex-wrap:nowrap; } }
+
+/* Resúmenes */
+.fila-res { cursor:pointer; }
+.fila-res:hover td { background:var(--surface-2); }

@@ -9,7 +9,7 @@ const store = {
 // ---------- Acceso con Google y comunicación con el servidor ----------
 const CFG = window.OPUS_CONFIG || {};
 let TOKEN = '';
-try { TOKEN = sessionStorage.getItem('opus_token') || ''; } catch (e) { /* sin almacenamiento */ }
+try { TOKEN = localStorage.getItem('opus_token') || sessionStorage.getItem('opus_token') || ''; } catch (e) { /* sin almacenamiento */ }
 
 function tokenVigente(t) {
   try {
@@ -20,7 +20,7 @@ function tokenVigente(t) {
 
 function guardarToken(t) {
   TOKEN = t;
-  try { if (t) sessionStorage.setItem('opus_token', t); else sessionStorage.removeItem('opus_token'); } catch (e) { /* sin almacenamiento */ }
+  try { if (t) localStorage.setItem('opus_token', t); else { localStorage.removeItem('opus_token'); sessionStorage.removeItem('opus_token'); } } catch (e) { /* sin almacenamiento */ }
 }
 
 function esperarGoogle() {
@@ -46,6 +46,7 @@ function pedirLogin() {
 }
 
 function alRecibirCredencial(resp) {
+  clearTimeout(mostrarLogin.h);
   guardarToken(resp.credential);
   document.getElementById('login').classList.add('hide');
   mostrarLoader();
@@ -53,17 +54,20 @@ function alRecibirCredencial(resp) {
 }
 
 async function mostrarLogin() {
-  ocultarLoader();
-  document.getElementById('login').classList.remove('hide');
+  // Primero se intenta entrar solo (Google recuerda la cuenta); si no se puede, aparece el botón.
+  mostrarLoader();
+  const login = document.getElementById('login');
   const msg = document.getElementById('loginmsg');
   msg.textContent = '';
+  const verBoton = () => { if (esperandoLogin) { ocultarLoader(); login.classList.remove('hide'); } };
+  clearTimeout(mostrarLogin.h); mostrarLogin.h = setTimeout(verBoton, 2500);
   try {
     await esperarGoogle();
     google.accounts.id.initialize({ client_id: CFG.clientId, callback: alRecibirCredencial, auto_select: true, use_fedcm_for_prompt: true });
     google.accounts.id.renderButton(document.getElementById('gbtn'),
       { theme: 'filled_black', size: 'large', text: 'signin_with', shape: 'pill', locale: 'es' });
     google.accounts.id.prompt();
-  } catch (e) { msg.textContent = e.message; }
+  } catch (e) { msg.textContent = e.message; verBoton(); }
 }
 
 function salir() {
@@ -136,8 +140,8 @@ function celda(m, c, v, f) {
 
 // ---------- vista ----------
 function renderTabs() {
-  const activa = S.vista === 'reglas' ? 'importar' : S.vista;
-  $('tabs').innerHTML = [['cargar', 'Cargar'], ['movs', 'Movimientos'], ['deudas', 'Deudas'], ['importar', 'Importar'], ['maestros', 'DDMM']].map(t =>
+  const activa = (S.vista === 'reglas' || S.vista === 'importar') ? 'resumenes' : S.vista;
+  $('tabs').innerHTML = [['cargar', 'Cargar'], ['movs', 'Movimientos'], ['deudas', 'Deudas'], ['resumenes', 'Resúmenes'], ['maestros', 'DDMM']].map(t =>
     '<button class="tab ' + (activa === t[0] ? 'on' : '') + '" data-v="' + t[0] + '">' + t[1] + '</button>').join('');
   $('tabs').querySelectorAll('.tab').forEach(b => b.onclick = () => irVista(b.dataset.v));
 }
@@ -145,6 +149,7 @@ function renderTabs() {
 function irVista(v) {
   S.vista = v; S.q = ''; store.set('vista', v);
   if (v === 'deudas') D.lista = null;
+  if (v === 'resumenes') { R.lista = null; R.sel = ''; }
   if (v === 'cargar') { C.recientes = null; reiniciarCarga(true); }
   if (v === 'maestros' && S.id === 'reglas') S.id = S.schemas.filter(s => s.id !== 'reglas')[0].id;
   if (v === 'reglas') S.id = 'reglas';
@@ -156,6 +161,7 @@ function render() {
   else if (S.vista === 'movs') renderMovs();
   else if (S.vista === 'deudas') renderDeudas();
   else if (S.vista === 'cargar') renderCargar();
+  else if (S.vista === 'resumenes') renderResumenes();
   else renderPage();
 }
 
@@ -182,7 +188,7 @@ function renderPage() {
   }
 
   const encabezado = enReglas
-    ? '<div><button class="mini" id="volver">← Volver a Importar</button><h1 style="margin-top:14px">Reglas de Importacion</h1></div>'
+    ? '<div><button class="mini" id="volver">← Volver a Resúmenes</button><h1 style="margin-top:14px">Reglas de Importacion</h1></div>'
     : '<div><h1>DDMM</h1></div>';
 
   $('page').innerHTML =
@@ -193,7 +199,7 @@ function renderPage() {
     '<span class="count">' + filas.length + ' de ' + (d.filas || []).length + ' en ' + esc(m.titulo) + '</span></div>' + cuerpo;
 
   $('page').querySelectorAll('.pill').forEach(b => b.onclick = () => { S.id = b.dataset.id; S.q = ''; store.set('maestro', S.id); renderPage(); });
-  if ($('volver')) $('volver').onclick = () => irVista('importar');
+  if ($('volver')) $('volver').onclick = () => irVista('resumenes');
   const qi = $('q');
   qi.oninput = () => { S.q = qi.value; const pos = qi.selectionStart; renderPage(); const n = $('q'); n.focus(); n.setSelectionRange(pos, pos); };
   $('nuevo').onclick = () => abrir(null);
@@ -450,7 +456,7 @@ function renderImportar() {
   else if (I.a) cuerpo = htmlRevision();
   else cuerpo = htmlInicio();
   $('page').innerHTML =
-    '<div><h1>Importar resumen</h1></div>' +
+    '<div><button class="mini" id="volverres">← Resúmenes</button><h1 style="margin-top:14px">Importar resumen</h1></div>' +
     (I.error ? '<div class="aviso">' + esc(I.error) + '</div>' : '') + cuerpo;
   enlazarImportar();
 }
@@ -610,6 +616,7 @@ function enlazarImportar() {
   }
   if ($('abrirclave')) $('abrirclave').onclick = () => leerArchivo(I.archivo, $('clave').value);
   if ($('verreglas')) $('verreglas').onclick = e => { e.preventDefault(); irVista('reglas'); };
+  if ($('volverres')) $('volverres').onclick = () => irVista('resumenes');
   if ($('otro')) $('otro').onclick = () => { resetImp(); renderImportar(); };
   if (!I.a || I.resultado) return;
 
@@ -678,9 +685,9 @@ function enPeriodo(m, anio) {
 function renderMovs() {
   if (M.movs === null) { cargarMovs(); return; }
   if (!M.movs.length) {
-    $('page').innerHTML = '<div><h1>Movimientos</h1></div><div class="card vacio">Todavía no hay movimientos. Importá un resumen desde <b style="color:var(--text)">Importar</b>.' +
-      '<div style="margin-top:16px"><button class="btn primary" id="irimp">Ir a Importar</button></div></div>';
-    $('irimp').onclick = () => irVista('importar');
+    $('page').innerHTML = '<div><h1>Movimientos</h1></div><div class="card vacio">Todavía no hay movimientos. Importá un resumen desde <b style="color:var(--text)">Resúmenes</b>.' +
+      '<div style="margin-top:16px"><button class="btn primary" id="irimp">Ir a Resúmenes</button></div></div>';
+    $('irimp').onclick = () => irVista('resumenes');
     return;
   }
   const meses = mesesDe(M.movs), anio = meses[0].slice(0, 4);
@@ -1067,13 +1074,82 @@ async function registrarPendiente(i) {
   } catch (e) { b.disabled = false; toast((e && e.message) || 'No se pudo registrar'); }
 }
 
+// ---------- Resúmenes (historial y detalle) ----------
+const R = { lista: null, movs: [], sel: '' };
+
+async function cargarResumenes() {
+  mostrarLoader();
+  try {
+    const r = await Promise.all([llamar('listarResumenes'), llamar('listarMovimientos')]);
+    R.lista = r[0].resumenes; R.movs = r[1].movimientos;
+  } catch (e) { toast((e && e.message) || 'No se pudieron cargar los resúmenes'); R.lista = []; R.movs = []; }
+  ocultarLoader();
+  if (S.vista === 'resumenes') renderResumenes();
+}
+
+const tarjetaCorta = n => 'Tarjeta ' + (String(n).length > 4 ? '•••• ' + String(n).slice(-4) : n);
+const movsDe = r => R.movs.filter(m => m.origen === r.origen);
+
+function renderResumenes() {
+  if (R.lista === null) { cargarResumenes(); return; }
+  const sel = R.lista.filter(r => r.cierre === R.sel)[0];
+  if (sel) { renderDetalleResumen(sel); return; }
+  const boton = '<button class="btn primary" id="impnuevo">Importar resumen</button>';
+  if (!R.lista.length) {
+    $('page').innerHTML = '<div class="titulo-fila"><h1>Resúmenes</h1>' + boton + '</div>' +
+      '<div class="card vacio">Todavía no importaste ningún resumen. Apretá <b style="color:var(--text)">Importar resumen</b> para cargar el primero.</div>';
+  } else {
+    const filas = R.lista.map(r => {
+      const n = movsDe(r).length;
+      return '<tr class="fila-res" data-cierre="' + esc(r.cierre) + '"><td class="mono">' + esc(fechaCorta(r.cierre)) + '</td>' +
+        '<td class="mono">' + esc(r.vencimiento ? fechaCorta(r.vencimiento) : '—') + '</td><td>' + esc(tarjetaCorta(r.tarjeta)) + '</td>' +
+        '<td class="r mono">' + esc(fmtMoney(r.saldoActual.ars, 'ARS')) + '</td>' +
+        '<td class="r mono">' + (r.saldoActual.usd ? esc(fmtMoney(r.saldoActual.usd, 'USD')) : '<span class="mut">—</span>') + '</td>' +
+        '<td class="r mono">' + esc(fmtMoney(r.pagoMinimo, 'ARS')) + '</td><td class="r mono">' + n + '</td></tr>';
+    }).join('');
+    $('page').innerHTML = '<div class="titulo-fila"><h1>Resúmenes</h1>' + boton + '</div>' +
+      '<div class="card tablewrap"><table><thead><tr><th>Cierre</th><th>Vence</th><th>Tarjeta</th><th class="r">Saldo ARS</th><th class="r">Saldo USD</th><th class="r">Pago mínimo</th><th class="r">Movimientos</th></tr></thead><tbody>' + filas + '</tbody></table></div>' +
+      '<div class="mut" style="font-weight:400;font-size:13px">Tocá un resumen para ver su detalle.</div>';
+  }
+  $('impnuevo').onclick = () => { resetImp(); irVista('importar'); };
+  $('page').querySelectorAll('.fila-res').forEach(tr => tr.onclick = () => { R.sel = tr.dataset.cierre; renderResumenes(); window.scrollTo(0, 0); });
+}
+
+function renderDetalleResumen(r) {
+  const ms = movsDe(r).slice().sort((a, b) => a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0);
+  const kpi = (l, v, s) => '<div class="card kpi"><span class="l">' + l + '</span><span class="v">' + esc(v) + '</span><span class="s">' + esc(s) + '</span></div>';
+  const usd = n => n ? ' · ' + fmtMoney(n, 'USD') : '';
+  const kpis = '<div class="kpis">' +
+    kpi('Saldo del resumen', fmtMoney(r.saldoActual.ars, 'ARS'), (r.saldoActual.usd ? fmtMoney(r.saldoActual.usd, 'USD') : 'Sin saldo en dólares')) +
+    kpi('Saldo anterior', fmtMoney(r.saldoAnterior.ars, 'ARS'), 'Pagos: ' + fmtMoney(Math.abs(r.pagos.ars), 'ARS') + usd(Math.abs(r.pagos.usd))) +
+    kpi('Arrastrado', fmtMoney(r.arrastrado.ars, 'ARS'), 'de lo anterior sin pagar' + usd(r.arrastrado.usd)) +
+    kpi('Pago mínimo', fmtMoney(r.pagoMinimo, 'ARS'), 'Vence ' + (r.vencimiento ? fechaCorta(r.vencimiento) : '—')) + '</div>';
+  const tot = { ARS: 0, USD: 0 };
+  ms.forEach(m => { if (m.tipo === 'Gasto') tot[m.moneda] = (tot[m.moneda] || 0) + m.monto; });
+  const filas = ms.map(m => {
+    const cat = m.tipo === 'Gasto' ? (m.subcategoria || '<span class="bad">Sin categorizar</span>') : '<span class="mut">' + esc(m.tipo) + (m.asignado ? ' → ' + esc(m.asignado) : '') + '</span>';
+    return '<tr><td class="mono">' + esc(fechaCorta(m.fecha).slice(0, 5)) + '</td><td>' + esc(m.desc) + '</td><td>' + (m.tipo === 'Gasto' ? (m.subcategoria ? esc(m.subcategoria) : cat) : cat) + '</td>' +
+      '<td class="mono">' + esc(m.cuota || '') + '</td><td class="r mono">' + (m.tipo === 'Gasto' ? '− ' : '') + esc(fmtMoney(m.monto, m.moneda)) + '</td></tr>';
+  }).join('');
+  $('page').innerHTML =
+    '<div><button class="mini" id="volverlista">← Resúmenes</button><h1 style="margin-top:14px">Resumen del ' + esc(fechaCorta(r.cierre)) + '</h1>' +
+    '<div class="mut" style="font-weight:400;margin-top:4px">' + esc(tarjetaCorta(r.tarjeta)) + (r.importado ? ' · importado el ' + esc(fechaCorta(r.importado)) : '') + '</div></div>' + kpis +
+    '<div class="card tablewrap">' + (ms.length
+      ? '<table><thead><tr><th>Fecha</th><th>Descripción</th><th>Categoría</th><th>Cuota</th><th class="r">Monto</th></tr></thead><tbody>' + filas + '</tbody></table>'
+      : '<div class="vacio">No hay movimientos de este resumen en la planilla.</div>') + '</div>' +
+    '<div class="mut" style="font-weight:400;font-size:13px">Gastos de este resumen: <b class="mono" style="color:var(--text)">' + esc(fmtMoney(tot.ARS, 'ARS')) + '</b>' +
+    (tot.USD ? ' · <b class="mono" style="color:var(--text)">' + esc(fmtMoney(tot.USD, 'USD')) + '</b>' : '') +
+    '. Para recategorizar un movimiento, usá la solapa Movimientos.</div>';
+  $('volverlista').onclick = () => { R.sel = ''; renderResumenes(); window.scrollTo(0, 0); };
+}
+
 // ---------- inicio ----------
 llamar('iniciar').then(r => {
   S.schemas = r.schemas; S.data = r.data; S.rev = r.revisiones; S.avisos = r.avisos;
   S.schemas.forEach(s => { S.byId[s.id] = s; });
   const guardado = store.get('maestro');
   S.id = S.byId[guardado] && guardado !== 'reglas' ? guardado : S.schemas[0].id;
-  S.vista = ['importar', 'movs', 'deudas', 'cargar', 'maestros'].indexOf(store.get('vista')) >= 0 ? store.get('vista') : 'cargar';
+  S.vista = ['resumenes', 'movs', 'deudas', 'cargar', 'maestros'].indexOf(store.get('vista')) >= 0 ? store.get('vista') : 'cargar';
   renderTabs(); render();
   ocultarLoader();
 }).catch(e => {
