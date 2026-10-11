@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://accounts.google.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://*.googleusercontent.com; connect-src 'self' https://script.google.com https://script.googleusercontent.com https://cdnjs.cloudflare.com https://accounts.google.com; frame-src https://accounts.google.com; worker-src 'self' blob:; manifest-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="theme-color" content="#0F0E0E">
+<title>OPUS</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css">
+<script src="config.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+
+<div class="top">
+  <div class="brand"><div class="logo"><span>O</span><i></i></div><span class="word">OPUS</span></div>
+  <div class="tabs" id="tabs"></div>
+  <button class="salir" id="salir" type="button">Salir</button>
+</div>
+
+<div class="page" id="page"></div>
+
+<div class="opus-loader" id="loader" role="status" aria-live="polite">
+  <div class="opus-loader__mark" aria-hidden="true">
+    <div class="opus-loader__arc opus-loader__arc--1"></div>
+    <div class="opus-loader__arc opus-loader__arc--2"></div>
+    <div class="opus-loader__arc opus-loader__arc--3"></div>
+    <div class="opus-loader__tile"><span class="opus-loader__o">O</span><span class="opus-loader__notch"></span></div>
+  </div>
+  <div class="opus-loader__text">
+    <span class="opus-loader__word">OPUS</span>
+    <span class="opus-loader__label">Cargando tus finanzas<span class="opus-loader__dots">...</span></span>
+  </div>
+</div>
+
+<div class="opus-login hide" id="login">
+  <div class="logo logo--grande"><span>O</span><i></i></div>
+  <div class="opus-login__word">OPUS</div>
+  <div class="opus-login__sub">Acceso privado</div>
+  <div id="gbtn"></div>
+  <div class="opus-login__msg" id="loginmsg"></div>
+</div>
+
+<div id="modal" class="hide"></div>
+<div id="toast" class="hide"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
