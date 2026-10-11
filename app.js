@@ -239,6 +239,7 @@ function opcionesRef(c, vals) {
   const ids = c.ref || (c.refSegun && c.refSegun[vals[c.refSegun.col]]) || [];
   let ops = [];
   ids.forEach(id => { ops = ops.concat(claves(id, c.filtro)); });
+  (c.especiales || []).forEach(v => ops.push({ v: v, act: true }));
   if (c.filtraMoneda && vals.Moneda) {
     const mon = vals.Moneda === 'UVA' ? 'ARS' : vals.Moneda;
     ops = ops.filter(o => !o.mon || o.mon === mon);
@@ -482,7 +483,7 @@ function htmlRevision() {
       : '<span class="mut" style="font-weight:400">Tarjeta: <b style="color:var(--text)">' + esc(a.tarjetas[0].ARS || a.tarjetas[0].USD) + '</b></span>')
     : '<span class="bad">No hay una tarjeta cargada en DDMM.</span>';
 
-  return '<div class="kpis">' + kpis + '</div>' +
+  return '<div class="kpis">' + kpis + '</div>' + htmlOmitidas() +
     '<div class="card opts">' + tarjetas +
     '<label><input type="checkbox" id="hist" ' + (I.historico ? 'checked' : '') + '> Importar como histórico (no cambia saldos)</label>' +
     (ok ? '' : '<label class="bad"><input type="checkbox" id="igual" ' + (I.importarIgual ? 'checked' : '') + '> Importar igual, aunque no cierre</label>') + '</div>' +
@@ -493,6 +494,13 @@ function htmlRevision() {
     '<div class="card tablewrap" id="imptabla"></div>' +
     '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn primary" id="impconf">Importar</button>' +
     '<button class="btn" id="otro">Cancelar</button><a href="#" id="verreglas" class="mut" style="margin-left:auto;color:var(--muted)">Ver reglas</a></div>';
+}
+
+function htmlOmitidas() {
+  const o = (I.a && I.a.omitidas) || [];
+  if (!o.length) return '';
+  return '<div class="mut" style="font-weight:400;font-size:13px">Omitidos por regla (' + o.length + '): ' +
+    o.map(x => esc(x.texto) + ' · ' + esc(fmtMoney(x.monto, x.moneda))).join(' · ') + '</div>';
 }
 
 function agrupadasGastos() {
