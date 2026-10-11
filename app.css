@@ -200,3 +200,7 @@ label.recl { display:flex; gap:8px; align-items:center; color:var(--text-2); cur
   .kpi .v { font-size:16px; }
   .opus-loader .word, .opus-login__word { display:block; }
 }
+
+.kpis.cinco { grid-template-columns:repeat(5, minmax(0,1fr)); }
+@media (max-width:1100px) { .kpis.cinco { grid-template-columns:repeat(3, minmax(0,1fr)); } }
+@media (max-width:720px) { .kpis.cinco { grid-template-columns:1fr 1fr; } }

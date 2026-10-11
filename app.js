@@ -638,6 +638,7 @@ const M = { movs: null, periodo: '', q: '', cuentas: [], tipo: '', cat: '', camp
 const nombreMes = ym => MESES_CORTO[Number(ym.slice(5, 7)) - 1] + ' ' + ym.slice(0, 4);
 const mesesDe = lista => Array.from(new Set(lista.map(m => m.fecha.slice(0, 7)))).sort().reverse();
 const sumaMov = lista => lista.reduce((s, m) => s + m.monto, 0);
+const mv = n => n + (n === 1 ? ' movimiento' : ' movimientos');
 
 async function cargarMovs() {
   mostrarLoader();
@@ -680,6 +681,8 @@ function renderMovs() {
   const totARS = sumaMov(gARS);
   const presc = sumaMov(gARS.filter(m => natDe[m.subcategoria] === 'Prescindible'));
   const deuda = sumaMov(gARS.filter(m => natDe[m.subcategoria] === 'Deuda'));
+  const aparte = base.filter(m => m.tipo === 'Adelanto' || m.tipo === 'Pago Deuda');   // salen de tu bolsillo pero no son gasto
+  const aparteARS = sumaMov(aparte.filter(m => m.moneda === 'ARS')), aparteUSD = sumaMov(aparte.filter(m => m.moneda === 'USD'));
 
   // categorías para el gráfico: las 6 mayores y el resto junto
   const porCat = {};
@@ -740,7 +743,8 @@ function renderMovs() {
 
   $('page').innerHTML =
     '<div class="titulo-fila"><h1>Movimientos</h1><div class="seg">' + periodos.map(p => '<button class="' + (M.periodo === p[0] ? 'on' : '') + '" data-per="' + p[0] + '">' + esc(p[1]) + '</button>').join('') + '</div></div>' +
-    '<div class="kpis">' + kpi('Gastos', fmtMoney(totARS, 'ARS'), gARS.length + ' movimientos en pesos', 'var(--danger)') + kpi('Gastos en dólares', fmtMoney(sumaMov(gUSD), 'USD'), gUSD.length + ' movimientos') +
+    '<div class="kpis cinco">' + kpi('Gastos', fmtMoney(totARS, 'ARS'), mv(gARS.length) + ' en pesos', 'var(--danger)') + kpi('Gastos en dólares', fmtMoney(sumaMov(gUSD), 'USD'), mv(gUSD.length)) +
+      kpi('Adelantos y pagos de deuda', fmtMoney(aparteARS, 'ARS') + (aparteUSD ? ' + ' + fmtMoney(aparteUSD, 'USD') : ''), mv(aparte.length) + ' · no cuentan como gasto') +
       kpi('Prescindible', (totARS ? Math.round(presc / totARS * 100) : 0) + '%', fmtMoney(presc, 'ARS') + ' del gasto en pesos') + kpi('Costo de deuda', fmtMoney(deuda, 'ARS'), 'intereses, comisiones y cuotas') + '</div>' +
     '<div class="card donutbox"><div class="donut" style="background:' + donut + '"><div class="hole"><span class="mut" style="font-size:12px;font-weight:400">' + esc(sel ? sel.n : 'Gastos') +
       '</span><span class="mono" style="font-size:16px;font-weight:600">' + esc(fmtMoney(sel ? sel.total : totARS, 'ARS')) + '</span></div></div><div class="legend">' + leyenda + '</div></div>' +
