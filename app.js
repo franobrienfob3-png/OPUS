@@ -109,11 +109,11 @@ function toast(msg) {
 }
 
 // ---------- formato ----------
-const fmtNum = n => Number(n).toLocaleString('es-AR', { maximumFractionDigits: 2 });
-function fmtMoney(n, mon) {
-  if (mon === 'USD') return 'US$ ' + fmtNum(n);
-  if (mon === 'UVA') return fmtNum(n) + ' UVA';
-  return '$ ' + fmtNum(n);
+const fmtNum = n => Number(n).toLocaleString('es-AR', { minimumFractionDigits: Number.isInteger(Number(n)) ? 0 : 2, maximumFractionDigits: 2 });
+function fmtMoney(n, mon) {   // espacio fijo (nbsp) para que el símbolo no quede solo en la línea
+  if (mon === 'USD') return 'US$ ' + fmtNum(n);
+  if (mon === 'UVA') return fmtNum(n) + ' UVA';
+  return '$ ' + fmtNum(n);
 }
 const fechaCorta = iso => { const p = String(iso).split('-'); return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : iso; };
 
@@ -137,7 +137,7 @@ function celda(m, c, v, f) {
 // ---------- vista ----------
 function renderTabs() {
   const activa = S.vista === 'reglas' ? 'importar' : S.vista;
-  $('tabs').innerHTML = [['maestros', 'DDMM'], ['importar', 'Importar']].map(t =>
+  $('tabs').innerHTML = [['maestros', 'DDMM'], ['importar', 'Importar'], ['movs', 'Movimientos']].map(t =>
     '<button class="tab ' + (activa === t[0] ? 'on' : '') + '" data-v="' + t[0] + '">' + t[1] + '</button>').join('');
   $('tabs').querySelectorAll('.tab').forEach(b => b.onclick = () => irVista(b.dataset.v));
 }
@@ -149,7 +149,11 @@ function irVista(v) {
   cerrar(); renderTabs(); render();
 }
 
-function render() { if (S.vista === 'importar') renderImportar(); else renderPage(); }
+function render() {
+  if (S.vista === 'importar') renderImportar();
+  else if (S.vista === 'movs') renderMovs();
+  else renderPage();
+}
 
 function renderPage() {
   const m = S.byId[S.id], d = S.data[S.id];
@@ -579,7 +583,7 @@ async function confirmarImp() {
   I.error = '';
   try {
     const res = await llamar('confirmarImportacion', I.texto, I.tarjeta, decisiones, { historico: I.historico, importarIgual: I.importarIgual });
-    S.data = res.data; S.rev = res.revisiones;
+    S.data = res.data; S.rev = res.revisiones; M.movs = null;
     I.resultado = { importados: res.importados, omitidos: res.omitidos, duplicados: res.duplicados, reglasNuevas: res.reglasNuevas, historico: I.historico };
   } catch (e) { I.error = (e && e.message) || 'No se pudo importar'; }
   renderImportar();
@@ -625,13 +629,209 @@ function enlazarImportar() {
   $('imptabla').addEventListener('input', manejar);
 }
 
+// ---------- Movimientos ----------
+const MESES_CORTO = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+const COLORES_CAT = ['#F2EFEB', '#C62F2B', '#E5574F', '#8C2A25', '#8A847E', '#5E5955', '#3A3634'];
+const M = { movs: null, periodo: '', q: '', cuentas: [], tipo: '', cat: '', campo: 'fecha', desc: true, limite: 120, edit: null };
+
+const nombreMes = ym => MESES_CORTO[Number(ym.slice(5, 7)) - 1] + ' ' + ym.slice(0, 4);
+const mesesDe = lista => Array.from(new Set(lista.map(m => m.fecha.slice(0, 7)))).sort().reverse();
+const sumaMov = lista => lista.reduce((s, m) => s + m.monto, 0);
+
+async function cargarMovs() {
+  mostrarLoader();
+  try {
+    M.movs = (await llamar('listarMovimientos')).movimientos;
+    const meses = mesesDe(M.movs);
+    if (M.periodo !== 'todo' && M.periodo !== 'anio' && meses.indexOf(M.periodo) < 0) M.periodo = meses[0] || 'todo';
+  } catch (e) { toast((e && e.message) || 'No se pudieron cargar los movimientos'); M.movs = []; }
+  ocultarLoader();
+  if (S.vista === 'movs') renderMovs();
+}
+
+function mapasGastos() {
+  const cat = {}, nat = {};
+  S.data.gastos.filas.forEach(f => { cat[f.v.Subcategoria] = f.v.Categoria; nat[f.v.Subcategoria] = f.v.Naturaleza; });
+  return { cat, nat };
+}
+
+function enPeriodo(m, anio) {
+  if (M.periodo === 'todo') return true;
+  if (M.periodo === 'anio') return m.fecha.slice(0, 4) === anio;
+  return m.fecha.slice(0, 7) === M.periodo;
+}
+
+function renderMovs() {
+  if (M.movs === null) { cargarMovs(); return; }
+  if (!M.movs.length) {
+    $('page').innerHTML = '<div><h1>Movimientos</h1></div><div class="card vacio">Todavía no hay movimientos. Importá un resumen desde <b style="color:var(--text)">Importar</b>.' +
+      '<div style="margin-top:16px"><button class="btn primary" id="irimp">Ir a Importar</button></div></div>';
+    $('irimp').onclick = () => irVista('importar');
+    return;
+  }
+  const meses = mesesDe(M.movs), anio = meses[0].slice(0, 4);
+  const { cat: catDe, nat: natDe } = mapasGastos();
+  const categoriaDe = m => m.tipo === 'Gasto' ? (catDe[m.subcategoria] || 'Otros') : '';
+
+  const base = M.movs.filter(m => enPeriodo(m, anio));
+  const gastos = base.filter(m => m.tipo === 'Gasto');
+  const gARS = gastos.filter(m => m.moneda === 'ARS'), gUSD = gastos.filter(m => m.moneda === 'USD');
+  const totARS = sumaMov(gARS);
+  const presc = sumaMov(gARS.filter(m => natDe[m.subcategoria] === 'Prescindible'));
+  const deuda = sumaMov(gARS.filter(m => natDe[m.subcategoria] === 'Deuda'));
+
+  // categorías para el gráfico: las 6 mayores y el resto junto
+  const porCat = {};
+  gARS.forEach(m => { const c = categoriaDe(m); porCat[c] = (porCat[c] || 0) + m.monto; });
+  let cats = Object.keys(porCat).map(n => ({ n, total: porCat[n] })).sort((a, b) => b.total - a.total);
+  const otras = new Set();
+  if (cats.length > 7) {
+    const resto = cats.slice(6);
+    resto.forEach(c => otras.add(c.n));
+    cats = cats.slice(0, 6).concat([{ n: 'Otras', total: resto.reduce((s, c) => s + c.total, 0) }]);
+  }
+  cats.forEach((c, i) => { c.color = COLORES_CAT[Math.min(i, COLORES_CAT.length - 1)]; });
+  const colorDeCat = n => { const c = cats.find(x => x.n === n) || cats.find(x => x.n === 'Otras'); return c ? c.color : COLORES_CAT[6]; };
+  const grupoCat = m => { const c = categoriaDe(m); return otras.has(c) ? 'Otras' : c; };
+  if (M.cat && !cats.some(c => c.n === M.cat)) M.cat = '';
+
+  let acum = 0;
+  const donut = totARS ? 'conic-gradient(' + cats.map(c => { const a = acum; acum += c.total / totARS * 100; return c.color + ' ' + a + '% ' + acum + '%'; }).join(',') + ')' : 'var(--surface-2)';
+  const sel = cats.find(c => c.n === M.cat);
+
+  // filtros de la tabla
+  const q = M.q.trim().toLowerCase();
+  const filas = base.filter(m =>
+    (!M.cuentas.length || M.cuentas.indexOf(m.cuenta) >= 0) && (!M.tipo || m.tipo === M.tipo) &&
+    (!M.cat || (m.tipo === 'Gasto' && grupoCat(m) === M.cat)) &&
+    (!q || (m.desc + ' ' + m.subcategoria + ' ' + m.cuenta + ' ' + m.asignado).toLowerCase().indexOf(q) >= 0));
+  const sentido = d => (M.desc ? -1 : 1) * d;
+  filas.sort((a, b) => M.campo === 'monto' ? sentido(a.monto - b.monto) : sentido(a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0));
+
+  const cuentasBase = Array.from(new Set(base.map(m => m.cuenta))).sort();
+  const tiposBase = Array.from(new Set(base.map(m => m.tipo)));
+  const neto = mon => filas.filter(m => m.moneda === mon).reduce((s, m) => s + (m.tipo === 'Ingreso' ? m.monto : m.tipo === 'Gasto' ? -m.monto : 0), 0);
+  const netoARS = neto('ARS'), netoUSD = neto('USD');
+
+  const periodos = meses.slice(0, 4).map(ym => [ym, nombreMes(ym)]).concat([['anio', 'Año ' + anio], ['todo', 'Todo']]);
+  const kpi = (l, v, s, color) => '<div class="card kpi"><span class="l">' + l + '</span><span class="v" ' + (color ? 'style="color:' + color + '"' : '') + '>' + esc(v) + '</span><span class="s">' + esc(s) + '</span></div>';
+  const chip = (activo, dato, txt) => '<button class="pill ' + (activo ? 'on' : '') + '" ' + dato + '>' + esc(txt) + '</button>';
+
+  const leyenda = cats.length ? cats.map(c => '<div class="leg ' + (c.n === M.cat ? 'on' : '') + '" data-cat="' + esc(c.n) + '"><span class="sw" style="background:' + c.color + '"></span><span class="n">' + esc(c.n) +
+    '</span><span class="mono">' + esc(fmtMoney(c.total, 'ARS')) + '</span><span class="mono mut pc">' + Math.round(c.total / totARS * 100) + '%</span></div>').join('')
+    : '<div class="mut" style="font-weight:400">Sin gastos en pesos en este período</div>';
+
+  const filasHtml = filas.slice(0, M.limite).map(m => {
+    const esGasto = m.tipo === 'Gasto', esIng = m.tipo === 'Ingreso';
+    const catTxt = esGasto ? esc(m.subcategoria) : (m.asignado ? '→ ' + esc(m.asignado) : (m.subcategoria ? esc(m.subcategoria) : '—'));
+    return '<tr data-id="' + esc(m.id) + '"><td class="mono mut">' + esc(fechaCorta(m.fecha).slice(0, 5)) + '</td><td class="desc">' + esc(m.desc) +
+      (m.cuota ? ' <span class="tag">cuota ' + esc(m.cuota) + '</span>' : '') + '</td><td><span class="dot" style="background:' + (esGasto ? colorDeCat(grupoCat(m)) : 'var(--border-strong)') + '"></span>' + catTxt +
+      '</td><td class="mut cuentacol">' + esc(m.cuenta) + '</td><td class="mut tipocol">' + esc(m.tipo) + '</td><td class="r mono ' + (esGasto ? 'neg' : '') + '">' +
+      (esGasto ? '− ' : esIng ? '+ ' : '') + esc(fmtMoney(m.monto, m.moneda)) + '</td></tr>';
+  }).join('');
+
+  const flecha = campo => M.campo === campo ? (M.desc ? ' ▼' : ' ▲') : '';
+  const tabla = filas.length
+    ? '<table class="movt"><thead><tr><th class="ord" data-ord="fecha">Fecha' + flecha('fecha') + '</th><th>Descripción</th><th>Categoría</th><th class="cuentacol">Cuenta</th><th class="tipocol">Tipo</th><th class="r ord neg" data-ord="monto">Monto' + flecha('monto') + '</th></tr></thead><tbody>' + filasHtml + '</tbody></table>' +
+      (filas.length > M.limite ? '<div style="padding:14px;text-align:center"><button class="btn" id="mas">Mostrar más (' + (filas.length - M.limite) + ')</button></div>' : '') +
+      '<div class="neto"><span class="mut">Neto filtrado</span><span class="mono">' + (netoARS < 0 ? '− ' : '+ ') + esc(fmtMoney(Math.abs(netoARS), 'ARS')) + (netoUSD ? '  ·  ' + (netoUSD < 0 ? '− ' : '+ ') + esc(fmtMoney(Math.abs(netoUSD), 'USD')) : '') + '</span></div>'
+    : '<div class="vacio">Sin movimientos para estos filtros<div style="margin-top:14px"><button class="btn" id="limpiar">Limpiar filtros</button></div></div>';
+
+  $('page').innerHTML =
+    '<div class="titulo-fila"><h1>Movimientos</h1><div class="seg">' + periodos.map(p => '<button class="' + (M.periodo === p[0] ? 'on' : '') + '" data-per="' + p[0] + '">' + esc(p[1]) + '</button>').join('') + '</div></div>' +
+    '<div class="kpis">' + kpi('Gastos', fmtMoney(totARS, 'ARS'), gARS.length + ' movimientos en pesos', 'var(--danger)') + kpi('Gastos en dólares', fmtMoney(sumaMov(gUSD), 'USD'), gUSD.length + ' movimientos') +
+      kpi('Prescindible', (totARS ? Math.round(presc / totARS * 100) : 0) + '%', fmtMoney(presc, 'ARS') + ' del gasto en pesos') + kpi('Costo de deuda', fmtMoney(deuda, 'ARS'), 'intereses, comisiones y cuotas') + '</div>' +
+    '<div class="card donutbox"><div class="donut" style="background:' + donut + '"><div class="hole"><span class="mut" style="font-size:12px;font-weight:400">' + esc(sel ? sel.n : 'Gastos') +
+      '</span><span class="mono" style="font-size:16px;font-weight:600">' + esc(fmtMoney(sel ? sel.total : totARS, 'ARS')) + '</span></div></div><div class="legend">' + leyenda + '</div></div>' +
+    '<div class="toolbar"><div class="search"><span class="lupa"></span><input id="mq" placeholder="Buscar…" value="' + esc(M.q) + '"></div>' +
+      cuentasBase.map(c => chip(M.cuentas.indexOf(c) >= 0, 'data-cta="' + esc(c) + '"', c)).join('') +
+      tiposBase.map(t => chip(M.tipo === t, 'data-tipo="' + esc(t) + '"', t)).join('') +
+      (M.cat ? '<button class="pill rojo" id="quitacat">' + esc(M.cat) + ' ×</button>' : '') +
+      '<span class="count">' + filas.length + ' de ' + base.length + ' movimientos</span></div>' +
+    '<div class="card tablewrap">' + tabla + '</div>';
+
+  const pg = $('page');
+  pg.querySelectorAll('[data-per]').forEach(b => b.onclick = () => { M.periodo = b.dataset.per; M.cat = ''; M.limite = 120; renderMovs(); });
+  pg.querySelectorAll('.leg').forEach(l => l.onclick = () => { M.cat = M.cat === l.dataset.cat ? '' : l.dataset.cat; M.limite = 120; renderMovs(); });
+  pg.querySelectorAll('[data-cta]').forEach(b => b.onclick = () => { const c = b.dataset.cta, i = M.cuentas.indexOf(c); if (i >= 0) M.cuentas.splice(i, 1); else M.cuentas.push(c); renderMovs(); });
+  pg.querySelectorAll('[data-tipo]').forEach(b => b.onclick = () => { M.tipo = M.tipo === b.dataset.tipo ? '' : b.dataset.tipo; renderMovs(); });
+  pg.querySelectorAll('[data-ord]').forEach(h => h.onclick = () => { if (M.campo === h.dataset.ord) M.desc = !M.desc; else { M.campo = h.dataset.ord; M.desc = true; } renderMovs(); });
+  if ($('quitacat')) $('quitacat').onclick = () => { M.cat = ''; renderMovs(); };
+  if ($('mas')) $('mas').onclick = () => { M.limite += 200; renderMovs(); };
+  if ($('limpiar')) $('limpiar').onclick = () => { M.q = ''; M.cuentas = []; M.tipo = ''; M.cat = ''; renderMovs(); };
+  pg.querySelectorAll('tbody tr').forEach(tr => tr.onclick = () => abrirMov(tr.dataset.id));
+  const mq = $('mq');
+  mq.oninput = () => { M.q = mq.value; const p = mq.selectionStart; renderMovs(); const n = $('mq'); n.focus(); n.setSelectionRange(p, p); };
+}
+
+// ----- editar un movimiento -----
+function abrirMov(id) {
+  const m = M.movs.find(x => x.id === id);
+  if (!m) return;
+  M.edit = { id, m, sub: m.subcategoria === 'Sin categorizar' ? '' : m.subcategoria, asig: m.asignado, rec: false, par: true, txt: textoSugerido(m.desc), borrar: false };
+  renderEditMov();
+}
+
+function renderEditMov() {
+  const E = M.edit, m = E.m;
+  const editable = ['Gasto', 'Adelanto', 'Pago Deuda'].indexOf(m.tipo) >= 0;
+  const dato = (l, v) => '<div class="dato"><span class="mut">' + l + '</span><span>' + esc(v) + '</span></div>';
+  const campos = editable
+    ? '<label class="f">Categoría' + selSub({ clase: 'consumo' }, E.sub) + '<div class="ayuda">Si asignás a una deuda o a un fijo, la categoría puede quedar vacía.</div></label>' +
+      '<label class="f">Asignar a' + selAsig(E.asig) + '<div class="ayuda">Una deuda hace que deje de contarse como gasto.</div></label>' +
+      '<label class="f recl"><input type="checkbox" data-k="rec" ' + (E.rec ? 'checked' : '') + '> Recordar para próximos resúmenes</label>' +
+      '<div id="recbox" class="' + (E.rec ? '' : 'hide') + '"><input class="in" data-k="txt" value="' + esc(E.txt) + '">' +
+      '<label class="f recl"><input type="checkbox" data-k="par" ' + (E.par ? 'checked' : '') + '> Aplicar también a los “Sin categorizar” que contengan ese texto</label></div>'
+    : '<div class="mut" style="margin-top:16px;font-weight:400">Los movimientos de tipo ' + esc(m.tipo) + ' no se recategorizan.</div>';
+  $('modal').innerHTML = '<div class="overlay" id="ov"><div class="panel"><header><h2>Movimiento</h2><button class="x" id="cerrar" aria-label="Cerrar">×</button></header>' +
+    '<div class="body" id="body"><div id="err"></div><div class="datos">' + dato('Fecha', fechaCorta(m.fecha)) + dato('Descripción', m.desc) + dato('Monto', fmtMoney(m.monto, m.moneda)) +
+    dato('Cuenta', m.cuenta) + dato('Tipo', m.tipo) + (m.cuota ? dato('Cuota', m.cuota) : '') + dato('Origen', m.origen + (m.afecta === 'No' ? ' · histórico' : '')) + '</div>' + campos + '</div>' +
+    '<footer>' + (editable ? '<button class="btn primary" id="guardarmov">Guardar</button>' : '') + '<button class="btn danger" id="borrarmov">' + (E.borrar ? 'Tocá de nuevo para eliminar' : 'Eliminar') + '</button></footer></div></div>';
+  $('modal').classList.remove('hide');
+  $('ov').onclick = e => { if (e.target.id === 'ov') cerrar(); };
+  $('cerrar').onclick = cerrar;
+  const manejar = e => {
+    const k = e.target.dataset.k;
+    if (!k) return;
+    if (k === 'sub') E.sub = e.target.value;
+    if (k === 'asig') E.asig = e.target.value;
+    if (k === 'txt') E.txt = e.target.value;
+    if (k === 'par') E.par = e.target.checked;
+    if (k === 'rec') { E.rec = e.target.checked; $('recbox').classList.toggle('hide', !E.rec); }
+  };
+  $('body').addEventListener('change', manejar);
+  $('body').addEventListener('input', manejar);
+  if ($('guardarmov')) $('guardarmov').onclick = guardarMov;
+  $('borrarmov').onclick = borrarMov;
+}
+
+async function guardarMov() {
+  const E = M.edit;
+  const b = $('guardarmov'); b.disabled = true;
+  try {
+    const res = await llamar('actualizarMovimiento', E.id, { subcategoria: E.sub, asignarA: E.asig, recordar: E.rec ? E.txt : '', aplicarParecidos: E.rec && E.par });
+    M.movs = res.movimientos; S.data = res.data; S.rev = res.revisiones;
+    cerrar(); renderMovs();
+    toast(res.actualizados > 1 ? res.actualizados + ' movimientos actualizados' : 'Guardado' + (res.reglasNuevas ? ' · regla nueva' : ''));
+  } catch (e) { mostrarError((e && e.message) || 'No se pudo guardar'); b.disabled = false; }
+}
+
+async function borrarMov() {
+  const E = M.edit;
+  if (!E.borrar) { E.borrar = true; $('borrarmov').textContent = 'Tocá de nuevo para eliminar'; return; }
+  try {
+    M.movs = (await llamar('eliminarMovimiento', E.id)).movimientos;
+    cerrar(); renderMovs(); toast('Eliminado');
+  } catch (e) { E.borrar = false; $('borrarmov').textContent = 'Eliminar'; mostrarError((e && e.message) || 'No se pudo eliminar'); }
+}
+
 // ---------- inicio ----------
 llamar('iniciar').then(r => {
   S.schemas = r.schemas; S.data = r.data; S.rev = r.revisiones; S.avisos = r.avisos;
   S.schemas.forEach(s => { S.byId[s.id] = s; });
   const guardado = store.get('maestro');
   S.id = S.byId[guardado] && guardado !== 'reglas' ? guardado : S.schemas[0].id;
-  S.vista = store.get('vista') === 'importar' ? 'importar' : 'maestros';
+  S.vista = ['importar', 'movs'].indexOf(store.get('vista')) >= 0 ? store.get('vista') : 'maestros';
   renderTabs(); render();
   ocultarLoader();
 }).catch(e => {
