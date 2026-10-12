@@ -814,7 +814,7 @@ function renderEditMov() {
     campo('Descripción', '<input class="in" data-k="desc" autocomplete="off" value="' + esc(E.desc) + '">') +
     campo(m.tipo === 'Ajuste' ? 'Monto (positivo suma, negativo resta)' : 'Monto', '<input class="in" data-k="monto" inputmode="decimal" autocomplete="off" value="' + esc(E.monto) + '">', monedaCta === 'USD' ? 'En dólares' : monedaCta === 'UVA' ? 'En UVAs' : 'En pesos');
   campos += manual
-    ? campo('Cuenta', sel('cuenta', '<option value="">Elegí una cuenta</option>' + cuentasActivas().map(c => op(c.Nombre, E.cuenta, c.Nombre + ' (' + c.Moneda + ')')).join('')))
+    ? campo('Cuenta', sel('cuenta', '<option value="">Elegí una cuenta</option>' + (m.tipo === 'Transferencia' && S.data.tarjetas.filas.some(t => t.v.Nombre === E.destino) ? op(SIN_CUENTA, E.cuenta, 'Sin cuenta (lo pagó o acreditó el banco)') : '') + cuentasActivas().map(c => op(c.Nombre, E.cuenta, c.Nombre + ' (' + c.Moneda + ')')).join('')))
     : campo('Cuenta', '<div class="in" style="display:flex;align-items:center;opacity:.7">' + esc(m.cuenta) + '</div>', 'Es el origen del resumen importado y no se cambia.');
 
   if (m.tipo === 'Transferencia') {
@@ -953,6 +953,7 @@ function renderDeudas() {
 
 // ---------- Cargar ----------
 const C = { tipo: 'Gasto', v: {}, recientes: null, pendientes: [], error: '' };
+const SIN_CUENTA = '(Sin cuenta)';
 const TIPOS_CARGA = [['Gasto', 'Gasto'], ['Ingreso', 'Ingreso'], ['Transferencia', 'Transferencia'], ['Dolares', 'Dólares'], ['Pago Tarjeta', 'Pago de tarjeta'], ['Deuda', 'Deuda'], ['Ajuste', 'Ajuste']];
 
 const hoyLocal = () => { const d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); };
@@ -960,7 +961,7 @@ const cuentasActivas = () => S.data.cuentas.filas.filter(f => f.v.Estado !== 'In
 const cuentaPorNombre = n => cuentasActivas().filter(c => c.Nombre === n)[0];
 
 function reiniciarCarga(conservarCuenta) {
-  const cuenta = conservarCuenta ? C.v.cuenta : (store.get('cargar_cuenta') || '');
+  const cuenta = (conservarCuenta ? C.v.cuenta : (store.get('cargar_cuenta') || '')) === SIN_CUENTA ? '' : (conservarCuenta ? C.v.cuenta : (store.get('cargar_cuenta') || ''));
   C.v = { dir: (C.v && C.v.dir) || 'compra', tc: (C.v && C.v.tc) || '', cuenta: cuenta, destino: '', monto: '', montoDest: '', sub: '', tarjeta: '', deuda: '', fecha: hoyLocal(), nota: '' };
   C.error = '';
 }
@@ -1025,7 +1026,7 @@ function formularioCarga() {
     c += campoC('Cotización (pesos por dólar)', txt('tc', 'Ej: 1450', 'decimal'));
     c += '<div class="aviso" id="dolres" style="margin-top:16px;font-weight:500">' + esc(textoResultadoDolares()) + '</div>';
   } else if (C.tipo === 'Pago Tarjeta') {
-    c += campoC('Desde', sel('cuenta', optCuentas(v.cuenta)));
+    c += campoC('Desde', sel('cuenta', optCuentas(v.cuenta).replace('</option>', '</option><option value="' + SIN_CUENTA + '"' + (v.cuenta === SIN_CUENTA ? ' selected' : '') + '>Sin cuenta (lo pagó o acreditó el banco)</option>')), v.cuenta === SIN_CUENTA ? 'Baja la deuda de la tarjeta sin tocar ninguna de tus cuentas.' : '');
     const tarjetas = S.data.tarjetas.filas.filter(f => f.v.Estado !== 'Inactivo' && (!mon || f.v.Moneda === mon)).map(f => op(f.v.Nombre, v.tarjeta));
     c += campoC('Tarjeta', sel('tarjeta', '<option value="">Elegí la tarjeta</option>' + tarjetas.join('')), mon ? 'Se muestran las tarjetas en ' + mon + '.' : '');
   } else if (C.tipo === 'Deuda') {
@@ -1077,7 +1078,7 @@ function renderCargar() {
 
 function enlazarCargar() {
   const pg = $('page');
-  pg.querySelectorAll('#tiposc button').forEach(b => b.onclick = () => { C.tipo = b.dataset.t; C.error = ''; C.v.sub = ''; renderCargar(); });
+  pg.querySelectorAll('#tiposc button').forEach(b => b.onclick = () => { C.tipo = b.dataset.t; C.error = ''; C.v.sub = ''; if (C.v.cuenta === SIN_CUENTA) C.v.cuenta = ''; renderCargar(); });
   const refrescar = () => { $('formc').innerHTML = formularioCarga(); enlazarForm(); };
   const enlazarForm = () => {
     document.querySelectorAll('#dirdol button').forEach(b => b.onclick = () => { C.v.dir = b.dataset.dir; C.v.cuenta = ''; C.v.destino = ''; refrescar(); });
@@ -1086,7 +1087,7 @@ function enlazarCargar() {
       el.oninput = el.onchange = () => {
         C.v[k] = el.value;
         if (C.tipo === 'Dolares' && (k === 'monto' || k === 'tc')) actualizarDolares();
-        if (k === 'cuenta') { store.set('cargar_cuenta', el.value); if (C.tipo === 'Transferencia' && C.v.destino === el.value) C.v.destino = ''; if (C.tipo === 'Pago Tarjeta') C.v.tarjeta = ''; }
+        if (k === 'cuenta') { if (el.value !== SIN_CUENTA) store.set('cargar_cuenta', el.value); if (C.tipo === 'Transferencia' && C.v.destino === el.value) C.v.destino = ''; if (C.tipo === 'Pago Tarjeta') C.v.tarjeta = ''; }
         if (el.tagName === 'SELECT' && ['cuenta', 'destino', 'deuda'].indexOf(k) >= 0) { const m = C.v.monto; refrescar(); C.v.monto = m; }
       };
     });
