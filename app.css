@@ -241,7 +241,7 @@ label.recl { display:flex; gap:8px; align-items:center; color:var(--text-2); cur
 
 /* Dashboard */
 .small { font-size:12px; font-weight:400; }
-.dgrid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px; }
+.dgrid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px; align-items:start; }
 .dgrid .ancho { grid-column:1 / -1; }
 .dgrid .card { min-width:0; }
 .dfila { display:flex; align-items:baseline; gap:10px; padding:7px 0; border-top:1px solid var(--border-row); font-size:14px; }
@@ -261,10 +261,14 @@ label.recl { display:flex; gap:8px; align-items:center; color:var(--text-2); cur
 .sw.ing, .evbars i.ing { background:var(--text); }
 .sw.gas, .evbars i.gas { background:var(--accent); }
 .sw { display:inline-block; width:10px; height:10px; border-radius:3px; vertical-align:middle; }
-.donutbox.chico { padding:0; grid-template-columns:170px 1fr; gap:20px; }
+.donutbox.chico { padding:0; grid-template-columns:160px minmax(0,1fr); gap:20px; }
+.donutbox.chico .legend { grid-template-columns:minmax(0,1fr); gap:2px; }
+.donutbox.chico .leg { grid-template-columns:14px minmax(0,1fr) auto 40px; padding:7px 8px; }
+.donutbox.chico .leg .n { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .donutbox.chico .donut { width:160px; height:160px; }
 .donutbox.chico .donut .hole { inset:22px; }
-@media (max-width:900px) { .dgrid { grid-template-columns:1fr; } .donutbox.chico { grid-template-columns:1fr; justify-items:center; } }
+@media (max-width:1180px) { .donutbox.chico { grid-template-columns:1fr; justify-items:center; } .donutbox.chico .legend { width:100%; } }
+@media (max-width:900px) { .dgrid { grid-template-columns:1fr; } }
 
 /* Esqueleto mientras cargan los datos */
 .esq { background:linear-gradient(90deg, var(--surface) 0%, var(--surface-2) 50%, var(--surface) 100%); background-size:200% 100%; animation:esq 1.3s ease-in-out infinite; border-color:transparent; }

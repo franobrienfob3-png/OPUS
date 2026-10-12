@@ -1376,7 +1376,7 @@ function renderDashboard() {
   const topHtml = top.length ? top.map(m => fila(esc(m.desc) + ' <span class="mut small">' + esc(fechaCorta(m.fecha).slice(0, 5)) + (m.subcategoria ? ' · ' + esc(m.subcategoria) : '') + '</span>', esc(fmtMoney(m.monto, 'ARS')))).join('') : '<div class="mut" style="font-weight:400">Sin gastos en este período</div>';
 
   const leyenda = cats.map(c => '<div class="leg"><span class="sw" style="background:' + c.color + '"></span><span class="n">' + esc(c.n) + '</span><span class="mono">' + esc(fmtMoney(c.total, 'ARS')) + '</span><span class="mono mut pc">' + porc(c.total, gas.ARS) + '%</span></div>').join('');
-  const catHtml = '<div class="donutbox chico"><div class="donut" style="background:' + donut + '"><div class="hole"><span class="mut" style="font-size:12px;font-weight:400">Gastos</span><span class="mono" style="font-size:15px;font-weight:600">' + esc(fmtMoney(gas.ARS, 'ARS')) + '</span></div></div><div class="legend">' + (leyenda || '<div class="mut" style="font-weight:400">Sin gastos en pesos</div>') + '</div></div>';
+  const catHtml = '<div class="donutbox chico"><div class="donut" style="background:' + donut + '"><div class="hole"><span class="mut" style="font-size:12px;font-weight:400">Gastos</span><span class="mono" style="font-size:15px;font-weight:600">' + esc(gas.ARS >= 1e6 ? '$ ' + (gas.ARS / 1e6).toFixed(2).replace('.', ',') + ' M' : fmtMoney(Math.round(gas.ARS), 'ARS')) + '</span></div></div><div class="legend">' + (leyenda || '<div class="mut" style="font-weight:400">Sin gastos en pesos</div>') + '</div></div>';
 
   $('page').innerHTML =
     '<div class="titulo-fila"><h1>Dashboard</h1>' + periodos + '</div>' + kpis +
