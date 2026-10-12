@@ -1637,7 +1637,8 @@ function renderFlujo() {
   $('page').innerHTML = '<div class="titulo-fila"><h1>Flujo de caja</h1></div>' + datos + hasta + tl +
     '<div class="mut small" style="max-width:760px">' + notas.join('<br>') + '</div>';
 
-  $('fcobro').onchange = e => guardarPref({ proximoCobro: e.target.value });
+  // mientras escribís el año (2 → 20 → 202 → 2026) el navegador ya da fechas "válidas": se espera a que el año sea real
+  $('fcobro').onchange = e => { const v = e.target.value; if (v === '' || (v >= '2020-01-01' && v <= '2100-12-31')) guardarPref({ proximoCobro: v }); };
   $('fconsumo').onchange = e => { const n = numAR(e.target.value); guardarPref({ consumoCiclo: isFinite(n) && n >= 0 ? n : 0 }); };
   $('horiz').querySelectorAll('button').forEach(b => b.onclick = () => { FL.dias = Number(b.dataset.d); renderFlujo(); });
 }
