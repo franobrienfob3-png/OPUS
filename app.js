@@ -1544,10 +1544,11 @@ function armarFlujo() {
   if (tj && tj.r.vencimiento) {
     let prox = masMeses(tj.r.vencimiento, 1);
     while (prox < hoy) prox = masMeses(prox, 1);
-    const fijosTarjeta = fijosActivos().filter(v => v.Movimiento === 'Gasto' && fijoEsDeTarjeta(v)).reduce((t, v) => t + fijoEnPesos(v), 0);
+    const listaTarjeta = fijosActivos().filter(v => v.Movimiento === 'Gasto' && fijoEsDeTarjeta(v));
+    const fijosTarjeta = listaTarjeta.reduce((t, v) => t + fijoEnPesos(v), 0);
     if (PREFS.consumoCiclo > 0) poner(prox, 'Tarjeta: lo que ya gastaste este ciclo', -PREFS.consumoCiclo, 'tarjeta');
     if (cf.prox.ARS > 0) poner(prox, 'Tarjeta: cuotas del próximo resumen', -cf.prox.ARS, 'tarjeta');
-    if (fijosTarjeta > 0) poner(prox, 'Tarjeta: fijos del mes (seguro, suscripciones…)', -Math.round(fijosTarjeta * 100) / 100, 'tarjeta');
+    if (fijosTarjeta > 0) poner(prox, 'Tarjeta: ' + listaTarjeta.length + ' fijos del mes (seguro, suscripciones, cuota del club…)', -Math.round(fijosTarjeta * 100) / 100, 'tarjeta');
   }
 
   // cuotas de deudas (las de UVA se estiman con el último pago que cargaste)
@@ -1572,7 +1573,7 @@ function armarFlujo() {
   // fijos del mes siguiente que salen de tus cuentas (se asume que salen justo después de cobrar)
   const fijosCuenta = fijosActivos().filter(v => v.Movimiento === 'Gasto' && !fijoEsDeTarjeta(v) && v.Moneda === 'ARS');
   const totFijosCuenta = fijosCuenta.reduce((t, v) => t + (Number(v.Monto) || 0), 0);
-  if (cobro && totFijosCuenta > 0) poner(masDias(cobro, 1), 'Fijos del mes (' + fijosCuenta.map(v => v.Nombre).join(', ') + ')', -totFijosCuenta, 'fijo');
+  if (cobro && totFijosCuenta > 0) poner(masDias(cobro, 1), 'Fijos que salen de tus cuentas (' + fijosCuenta.map(v => v.Nombre).join(', ') + ')', -totFijosCuenta, 'fijo');
 
   // cobros
   const sueldos = S.data.fijos.filas.filter(f => f.v.Movimiento === 'Ingreso' && f.v.Estado !== 'Inactivo' && f.v.Moneda === 'ARS').reduce((s, f) => s + (Number(f.v.Monto) || 0), 0);
