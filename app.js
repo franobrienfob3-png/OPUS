@@ -1382,6 +1382,48 @@ function renderDashboard() {
   const leyenda = cats.map(c => '<div class="leg"><span class="sw" style="background:' + c.color + '"></span><span class="n">' + esc(c.n) + '</span><span class="mono">' + esc(fmtMoney(c.total, 'ARS')) + '</span><span class="mono mut pc">' + porc(c.total, gas.ARS) + '%</span></div>').join('');
   const catHtml = '<div class="donutbox chico"><div class="donut" style="background:' + donut + '"><div class="hole"><span class="mut" style="font-size:12px;font-weight:400">Gastos</span><span class="mono" style="font-size:15px;font-weight:600">' + esc(gas.ARS >= 1e6 ? '$ ' + (gas.ARS / 1e6).toFixed(2).replace('.', ',') + ' M' : fmtMoney(Math.round(gas.ARS), 'ARS')) + '</span></div></div><div class="legend">' + (leyenda || '<div class="mut" style="font-weight:400">Sin gastos en pesos</div>') + '</div></div>';
 
+  // caja real: qué entró y salió de tus cuentas en el período (misma lógica que "Saldo por cuenta")
+  const ctasDe = {}, tjsDe = {};
+  S.data.cuentas.filas.forEach(f => { ctasDe[f.v.Nombre] = f.v; });
+  S.data.tarjetas.filas.forEach(f => { tjsDe[f.v.Nombre] = true; });
+  const desdeC = per === 'todo' ? '' : per === 'anio' ? anio + '-01-01' : per + '-01';
+  const hastaC = per === 'todo' ? '9999-12-31' : per === 'anio' ? anio + '-12-31' : per + '-31';
+  const caja = { inicio: { ARS: 0, USD: 0 }, filas: {} };
+  const poner = (m, mon, cat, v) => {
+    if (m.fecha < desdeC) { caja.inicio[mon] = (caja.inicio[mon] || 0) + v; return; }
+    if (m.fecha > hastaC) return;
+    const fila = caja.filas[cat] = caja.filas[cat] || {};
+    fila[mon] = (fila[mon] || 0) + v;
+  };
+  DB.movs.forEach(m => {
+    if (m.afecta !== 'Si') return;
+    const o = ctasDe[m.cuenta], d = ctasDe[m.destino];
+    if (m.tipo === 'Ingreso' && o) poner(m, o.Moneda, 'Ingresos', m.monto);
+    else if (m.tipo === 'Cobro Deuda' && o) poner(m, o.Moneda, 'Cobros de deudas', m.monto);
+    else if (m.tipo === 'Gasto' && o) poner(m, o.Moneda, 'Gastos pagados desde cuentas', -m.monto);
+    else if (m.tipo === 'Pago Deuda' && o) poner(m, o.Moneda, 'Cuotas de deudas', -m.monto);
+    else if (m.tipo === 'Ajuste' && o) poner(m, o.Moneda, 'Ajustes de saldo', m.monto);
+    else if (m.tipo === 'Transferencia') {
+      if (o && tjsDe[m.destino]) poner(m, o.Moneda, 'Pagos de tarjeta', -m.monto);
+      else if (o && d && o.Moneda === d.Moneda) { /* entre tus cuentas: el total no cambia */ }
+      else {
+        if (o) poner(m, o.Moneda, 'Compra y venta de dólares', -m.monto);
+        if (d) poner(m, d.Moneda, 'Compra y venta de dólares', Number(m.montoDestino) || m.monto);
+      }
+    }
+  });
+  const ordenCaja = ['Ingresos', 'Cobros de deudas', 'Gastos pagados desde cuentas', 'Pagos de tarjeta', 'Cuotas de deudas', 'Compra y venta de dólares', 'Ajustes de saldo'];
+  const filasCaja = ordenCaja.filter(c => caja.filas[c] && (caja.filas[c].ARS || caja.filas[c].USD));
+  const cierreC = { ARS: caja.inicio.ARS || 0, USD: caja.inicio.USD || 0 };
+  filasCaja.forEach(c => { cierreC.ARS += caja.filas[c].ARS || 0; cierreC.USD += caja.filas[c].USD || 0; });
+  const celdaC = (v, mon) => v ? (v < 0 ? '− ' : '+ ') + esc(fmtMoney(Math.abs(v), mon)) : '<span class="mut">—</span>';
+  const filaC = (a, b, c, cls) => '<div class="dfila caja ' + (cls || '') + '"><span class="n">' + a + '</span><span class="mono">' + b + '</span><span class="mono">' + c + '</span></div>';
+  const cajaHtml = filaC('', 'Pesos', 'Dólares', 'cab mut small') +
+    (desdeC ? filaC('Saldo al inicio', esc(fmtMoney(caja.inicio.ARS || 0, 'ARS')), esc(fmtMoney(caja.inicio.USD || 0, 'USD'))) : '') +
+    filasCaja.map(c => filaC(esc(c), celdaC(caja.filas[c].ARS, 'ARS'), celdaC(caja.filas[c].USD, 'USD'))).join('') +
+    filaC('<b>Saldo al cierre</b>', esc(fmtMoney(cierreC.ARS, 'ARS')), esc(fmtMoney(cierreC.USD, 'USD')), 'total') +
+    '<div class="mut small" style="margin-top:10px">Es plata real: lo que entró y salió de tus cuentas. Por eso no coincide con “Ahorro”, que cuenta los gastos de la tarjeta cuando aparecen en el resumen y no cuando pagás la tarjeta. Si “Ajustes de saldo” es grande, hay movimientos que todavía no cargaste.</div>';
+
   $('page').innerHTML =
     '<div class="titulo-fila"><h1>Dashboard</h1>' + periodos + '</div>' + kpis +
     (avisos.length ? card('Para mirar', '<ul class="avisos">' + avisos.map(a => '<li>' + esc(a) + '</li>').join('') + '</ul>') : '') +
@@ -1393,6 +1435,7 @@ function renderDashboard() {
     card('Gastos fijos y variables', grupoHtml(fijoVar)) +
     card('Mayores gastos del período', topHtml) +
     card('Patrimonio estimado', patHtml) +
+    card('Cómo se movió tu plata (caja real)', cajaHtml, 'ancho') +
     card('Saldo por cuenta', cuentasHtml + (sal.hayAjuste ? '' : '<div class="mut small" style="margin-top:8px">Sin saldos iniciales: los saldos reflejan solo lo cargado.</div>')) +
     card('Tarjeta de crédito', tjHtml) +
     card('Cuotas de tarjeta comprometidas', cuotasHtml) +
