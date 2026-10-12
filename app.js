@@ -1311,6 +1311,9 @@ function renderDashboard() {
   // para mirar
   const avisos = [];
   if (!sal.hayAjuste) avisos.push('Todavía no cargaste los saldos iniciales de tus cuentas: usá Cargar → Ajuste (nota “Saldo inicial”) para que el patrimonio sea real.');
+  if (esMes && DB.res[0] && per + '-31' > DB.res[0].cierre) {
+    avisos.push('Los números de ' + nombreMes(per) + ' son provisorios: el último resumen de tarjeta que importaste cierra el ' + fechaCorta(DB.res[0].cierre) + ', así que los consumos con tarjeta posteriores todavía no están. Cuando importes el próximo resumen, los gastos suben y el ahorro baja.');
+  }
   if (tj && tj.dias !== null && tj.ars > 0) {
     const cuando = tj.dias < 0 ? 'venció hace ' + (-tj.dias) + ' días' : tj.dias === 0 ? 'vence hoy' : 'vence en ' + tj.dias + ' días';
     avisos.push('La tarjeta ' + cuando + ': falta pagar ' + fmtMoney(tj.ars, 'ARS') + (tj.usd ? ' y ' + fmtMoney(tj.usd, 'USD') : '') + (sal.hayAjuste && sal.total.ARS < tj.ars ? ' (tus cuentas en pesos hoy no alcanzan)' : '') + '.');
