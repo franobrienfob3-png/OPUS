@@ -150,7 +150,7 @@ function celda(m, c, v, f) {
 // ---------- vista ----------
 function renderTabs() {
   const activa = (S.vista === 'reglas' || S.vista === 'importar') ? 'resumenes' : S.vista;
-  $('tabs').innerHTML = [['dashboard', 'Dashboard'], ['cargar', 'Cargar'], ['movs', 'Movimientos'], ['deudas', 'Deudas'], ['resumenes', 'Resúmenes'], ['maestros', 'DDMM']].map(t =>
+  $('tabs').innerHTML = [['dashboard', 'Dashboard'], ['flujo', 'Flujo'], ['cargar', 'Cargar'], ['movs', 'Movimientos'], ['deudas', 'Deudas'], ['resumenes', 'Resúmenes'], ['maestros', 'DDMM']].map(t =>
     '<button class="tab ' + (activa === t[0] ? 'on' : '') + '" data-v="' + t[0] + '">' + t[1] + '</button>').join('');
   $('tabs').querySelectorAll('.tab').forEach(b => b.onclick = () => irVista(b.dataset.v));
 }
@@ -159,7 +159,7 @@ function irVista(v) {
   S.vista = v; S.q = ''; store.set('vista', v);
   if (v === 'resumenes') R.sel = '';
   if (v === 'cargar') reiniciarCarga(true);
-  if (K.p && Date.now() - K.ts > 90000 && ['dashboard', 'movs', 'deudas', 'resumenes', 'cargar'].indexOf(v) >= 0) refrescarSilencioso();
+  if (K.p && Date.now() - K.ts > 90000 && ['dashboard', 'flujo', 'movs', 'deudas', 'resumenes', 'cargar'].indexOf(v) >= 0) refrescarSilencioso();
   if (v === 'maestros' && S.id === 'reglas') S.id = S.schemas.filter(s => s.id !== 'reglas')[0].id;
   if (v === 'reglas') S.id = 'reglas';
   cerrar(); renderTabs(); render();
@@ -172,6 +172,7 @@ function render() {
   else if (S.vista === 'cargar') renderCargar();
   else if (S.vista === 'resumenes') renderResumenes();
   else if (S.vista === 'dashboard') renderDashboard();
+  else if (S.vista === 'flujo') renderFlujo();
   else renderPage();
 }
 
@@ -1452,7 +1453,7 @@ function renderDashboard() {
 // Un solo pedido ("cargarTodo") alimenta Movimientos, Deudas, Resúmenes, Dashboard y Cargar.
 // Las solapas se dibujan al instante con lo que ya hay y se refrescan en segundo plano.
 const K = { ts: 0, p: null, h: null };
-const TITULOS = { dashboard: 'Dashboard', cargar: 'Cargar', movs: 'Movimientos', deudas: 'Deudas', resumenes: 'Resúmenes' };
+const TITULOS = { dashboard: 'Dashboard', flujo: 'Flujo de caja', cargar: 'Cargar', movs: 'Movimientos', deudas: 'Deudas', resumenes: 'Resúmenes' };
 
 function traerTodo(forzar) {
   if (!forzar && K.p) return K.p;
@@ -1472,6 +1473,7 @@ function aplicarTodo(r) {
   const mu = mesesDe(DB.movs.filter(x => x.tipo === 'Gasto' || x.tipo === 'Ingreso'));
   if (DB.periodo !== 'todo' && DB.periodo !== 'anio' && mu.indexOf(DB.periodo) < 0) DB.periodo = mu[0] || 'todo';
   C.recientes = r.cargar.recientes; C.pendientes = r.cargar.pendientes;
+  Object.assign(PREFS, r.prefs || {});
 }
 
 /** Algo cambió en la planilla: lo guardado ya no sirve. Se vuelve a pedir en un rato, sin que tengas que esperar. */
@@ -1489,7 +1491,7 @@ const hayEdicionAbierta = () => {
 
 async function refrescarSilencioso() {
   try { aplicarTodo(await traerTodo(true)); } catch (e) { return; }
-  if (['dashboard', 'movs', 'deudas', 'resumenes'].indexOf(S.vista) >= 0 && !hayEdicionAbierta()) render();
+  if (['dashboard', 'flujo', 'movs', 'deudas', 'resumenes'].indexOf(S.vista) >= 0 && !hayEdicionAbierta()) render();
 }
 
 function esqueleto(vista) {
@@ -1510,6 +1512,136 @@ async function necesitaDatos() {
   if (S.vista === vista) render();
 }
 
+// ---------- Flujo de caja ----------
+const PREFS = { proximoCobro: '', consumoCiclo: 0 };
+const FL = { dias: 60 };
+
+const diasEntre = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000);
+const isoDe = d => d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+const masDias = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return isoDe(d); };
+const masMeses = (iso, n) => {
+  const p = iso.split('-').map(Number), d = new Date(p[0], p[1] - 1 + n, 1);
+  d.setDate(Math.min(p[2], new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()));
+  return isoDe(d);
+};
+
+/** Todo lo que va a entrar y salir de tus cuentas en pesos, con fecha, desde hoy hasta el horizonte elegido. */
+function armarFlujo() {
+  const hoy = DB.hoy, cobro = PREFS.proximoCobro && PREFS.proximoCobro >= hoy ? PREFS.proximoCobro : '';
+  const fin = masDias(hoy, FL.dias);
+  const sal = saldosCuentas(), tj = tarjetaPendiente(), cf = cuotasFuturas();
+  const ev = [], sinEstimar = [], enDolares = [];
+  const poner = (fecha, concepto, monto, tipo) => { if (fecha <= fin) ev.push({ fecha, concepto, monto, tipo }); };
+
+  // tarjeta: lo que ya se debe y el próximo resumen
+  if (tj && tj.ars > 0) {
+    const vencida = tj.r.vencimiento && tj.r.vencimiento < hoy;
+    poner(vencida || !tj.r.vencimiento ? hoy : tj.r.vencimiento, 'Tarjeta: saldo del resumen del ' + fechaCorta(tj.r.cierre) + (vencida ? ' (ya vencido: genera intereses)' : ''), -tj.ars, 'tarjeta');
+  }
+  if (tj && tj.r.vencimiento) {
+    let prox = masMeses(tj.r.vencimiento, 1);
+    while (prox < hoy) prox = masMeses(prox, 1);
+    const monto = (PREFS.consumoCiclo || 0) + cf.prox.ARS;
+    if (monto > 0) poner(prox, 'Tarjeta: próximo resumen (tus consumos + cuotas)', -monto, 'tarjeta');
+  }
+
+  // cuotas de deudas (las de UVA se estiman con el último pago que cargaste)
+  DB.deudas.filter(d => d.estado !== 'Inactivo' && !d.finalizada && d.proximo).forEach(d => {
+    let valor = d.valor;
+    if (d.moneda === 'USD') { enDolares.push(d); return; }
+    if (d.moneda === 'UVA') {
+      const pagos = DB.movs.filter(m => m.tipo === 'Pago Deuda' && m.asignado === d.nombre && m.moneda === 'ARS').sort((a, b) => a.fecha < b.fecha ? 1 : -1);
+      if (!pagos.length) { sinEstimar.push(d.nombre); return; }
+      valor = pagos[0].monto;
+    }
+    for (let k = 0; k < d.restantes; k++) {
+      const fecha = masMeses(d.proximo, k);
+      if (fecha > fin) break;
+      poner(fecha < hoy ? hoy : fecha, (d.porCobrar ? 'Te pagan: ' : 'Cuota: ') + d.nombre + (d.moneda === 'UVA' ? ' (estimada)' : ''), d.porCobrar ? valor : -valor, d.porCobrar ? 'ingreso' : 'deuda');
+    }
+  });
+
+  // fijos del mes que todavía no cargaste (gastos: se asume que salen ya; ingresos: llegan al cobrar)
+  C.pendientes.filter(p => p.movimiento === 'Gasto' && p.moneda === 'ARS').forEach(p => poner(hoy, 'Fijo pendiente: ' + p.nombre, -Number(p.monto), 'fijo'));
+
+  // cobros
+  const sueldos = S.data.fijos.filas.filter(f => f.v.Movimiento === 'Ingreso' && f.v.Estado !== 'Inactivo' && f.v.Moneda === 'ARS').reduce((s, f) => s + (Number(f.v.Monto) || 0), 0);
+  if (cobro && sueldos > 0) {
+    poner(cobro, 'Cobro de tus ingresos fijos', sueldos, 'cobro');
+    poner(masMeses(cobro, 1), 'Cobro de tus ingresos fijos', sueldos, 'cobro');
+  }
+
+  ev.sort((a, b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : a.monto - b.monto);
+  let saldo = sal.total.ARS;
+  ev.forEach(e => { saldo += e.monto; e.saldo = saldo; });
+  const primerRojo = ev.filter(e => e.saldo < 0)[0];
+
+  // cuánto podés gastar hasta cobrar
+  let hasta = null;
+  if (cobro) {
+    const salidas = ev.filter(e => e.monto < 0 && e.fecha <= cobro), entradas = ev.filter(e => e.monto > 0 && e.fecha < cobro);
+    const sumar = l => l.reduce((s, e) => s + e.monto, 0);
+    const libre = sal.total.ARS + sumar(salidas) + sumar(entradas);
+    const tarjetaYa = salidas.filter(e => e.tipo === 'tarjeta' && e.fecha === hoy).reduce((s, e) => s - e.monto, 0);
+    const dias = Math.max(1, diasEntre(hoy, cobro));
+    hasta = { cobro, dias, salidas, entradas, libre, porDia: libre > 0 ? libre / dias : 0, sinPagarTarjeta: libre + tarjetaYa, tarjetaYa };
+  }
+  return { hoy, fin, saldo: sal.total.ARS, saldoUSD: sal.total.USD, ev, hasta, primerRojo, sinEstimar, enDolares, sueldos };
+}
+
+function guardarPref(datos) {
+  Object.assign(PREFS, datos);
+  renderFlujo();
+  llamar('guardarPrefs', datos).catch(e => toast((e && e.message) || 'No se pudo guardar'));
+}
+
+function renderFlujo() {
+  if (DB.movs === null) { necesitaDatos(); return; }
+  const F = armarFlujo();
+  const money = n => (n < 0 ? '− ' : '') + fmtMoney(Math.abs(n), 'ARS');
+  const card = (t, html) => '<div class="card cuerpo-c"><h2 class="titulo-c">' + t + '</h2>' + html + '</div>';
+  const fila = (a, b, cls) => '<div class="dfila ' + (cls || '') + '"><span class="n">' + a + '</span><span class="mono">' + b + '</span></div>';
+
+  const datos = card('Tus datos', '<div class="dgrid" style="gap:0 16px"><label class="f">¿Cuándo cobrás?<input class="in" type="date" id="fcobro" value="' + esc(PREFS.proximoCobro) + '"></label>' +
+    '<label class="f">Lo que ya gastaste con la tarjeta este ciclo<input class="in" id="fconsumo" inputmode="decimal" autocomplete="off" placeholder="0" value="' + (PREFS.consumoCiclo ? esc(String(PREFS.consumoCiclo).replace('.', ',')) : '') + '">' +
+    '<div class="ayuda">Mirálo en el homebanking (sin cuotas: las cuotas ya las sumo yo). Es para estimar el próximo resumen.</div></label></div>');
+
+  let hasta;
+  if (!F.hasta) {
+    hasta = card('Hasta que cobres', '<div class="mut" style="font-weight:400">Elegí arriba la fecha en que cobrás y te digo cuánto podés gastar hasta ese día.</div>');
+  } else {
+    const h = F.hasta, neg = h.libre < 0;
+    const lineas = [fila('Plata hoy en tus cuentas (pesos)', money(F.saldo))]
+      .concat(h.salidas.map(e => fila(esc(e.concepto) + ' <span class="mut small">' + esc(fechaCorta(e.fecha).slice(0, 5)) + '</span>', money(e.monto))))
+      .concat(h.entradas.map(e => fila(esc(e.concepto) + ' <span class="mut small">' + esc(fechaCorta(e.fecha).slice(0, 5)) + '</span>', money(e.monto))));
+    hasta = card('Hasta que cobres (' + esc(fechaCorta(h.cobro).slice(0, 5)) + ', en ' + h.dias + (h.dias === 1 ? ' día' : ' días') + ')',
+      '<div class="gran ' + (neg ? 'bad' : '') + '">' + esc(money(h.libre)) + '</div>' +
+      '<div class="mut" style="font-weight:400;margin:2px 0 14px">' + (neg ? 'No te alcanza con lo que tenés: te faltan ' + esc(fmtMoney(-h.libre, 'ARS')) + ' para cubrir todo hasta cobrar.' : 'Es lo que podés gastar hasta cobrar, <b style="color:var(--text)">~' + esc(fmtMoney(Math.round(h.porDia), 'ARS')) + ' por día</b>, después de pagar lo que ya tenés comprometido.') + '</div>' +
+      lineas.join('') + '<div class="dfila total"><span class="n"><b>Te queda para gastar</b></span><span class="mono">' + esc(money(h.libre)) + '</span></div>' +
+      (h.tarjetaYa ? '<div class="mut small" style="margin-top:10px">Si decidís no pagar todavía la tarjeta vencida, tendrías ' + esc(money(h.sinPagarTarjeta)) + ' libres, pero cada día de demora cuesta intereses (más IVA), y son altos.</div>' : ''));
+  }
+
+  const filasTl = F.ev.length ? F.ev.map(e => '<div class="tl' + (e.saldo < 0 ? ' rojo' : '') + '"><span class="mono mut">' + esc(fechaCorta(e.fecha).slice(0, 5)) + '</span><span class="n">' + esc(e.concepto) +
+    '</span><span class="mono ' + (e.monto < 0 ? 'neg' : '') + '">' + (e.monto < 0 ? '− ' : '+ ') + esc(fmtMoney(Math.abs(e.monto), 'ARS')) + '</span><span class="mono sal">' + esc(money(e.saldo)) + '</span></div>').join('')
+    : '<div class="mut" style="font-weight:400">No hay movimientos previstos en este período.</div>';
+  const horizonte = '<div class="seg" id="horiz" style="margin-bottom:12px">' + [30, 60, 90].map(n => '<button class="' + (FL.dias === n ? 'on' : '') + '" data-d="' + n + '">' + n + ' días</button>').join('') + '</div>';
+  const tl = card('Qué viene en los próximos días', horizonte +
+    '<div class="tl cab"><span>Fecha</span><span>Qué</span><span class="mono">Monto</span><span class="mono sal">Saldo</span></div>' + fila('Hoy: lo que tenés en cuentas (pesos)', money(F.saldo), 'tlini') + filasTl +
+    (F.primerRojo ? '<div class="aviso" style="margin-top:12px">A partir del ' + esc(fechaCorta(F.primerRojo.fecha)) + ' tus cuentas en pesos quedan en rojo (' + esc(F.primerRojo.concepto) + '), si no entra plata antes.</div>' : ''));
+
+  const notas = [];
+  if (F.enDolares.length) notas.push('Las cuotas en dólares (' + F.enDolares.map(d => esc(d.nombre)).join(', ') + ') no están acá: salen de tus cuentas en dólares (tenés ' + esc(fmtMoney(F.saldoUSD, 'USD')) + ').');
+  if (F.sinEstimar.length) notas.push('No pude estimar la cuota de ' + F.sinEstimar.map(esc).join(', ') + ' (está en UVA y todavía no cargaste ningún pago).');
+  notas.push('No incluye gastos de efectivo o débito que todavía no hiciste, ni los fijos del mes que viene. Cuanto más cargues, más preciso es.');
+
+  $('page').innerHTML = '<div class="titulo-fila"><h1>Flujo de caja</h1></div>' + datos + hasta + tl +
+    '<div class="mut small" style="max-width:760px">' + notas.join('<br>') + '</div>';
+
+  $('fcobro').onchange = e => guardarPref({ proximoCobro: e.target.value });
+  $('fconsumo').onchange = e => { const n = numAR(e.target.value); guardarPref({ consumoCiclo: isFinite(n) && n >= 0 ? n : 0 }); };
+  $('horiz').querySelectorAll('button').forEach(b => b.onclick = () => { FL.dias = Number(b.dataset.d); renderFlujo(); });
+}
+
 // ---------- inicio ----------
 traerTodo().catch(() => { /* si falla, cada solapa lo vuelve a pedir */ });
 llamar('iniciar').then(r => {
@@ -1517,7 +1649,7 @@ llamar('iniciar').then(r => {
   S.schemas.forEach(s => { S.byId[s.id] = s; });
   const guardado = store.get('maestro');
   S.id = S.byId[guardado] && guardado !== 'reglas' ? guardado : S.schemas[0].id;
-  S.vista = ['dashboard', 'resumenes', 'movs', 'deudas', 'cargar', 'maestros'].indexOf(store.get('vista')) >= 0 ? store.get('vista') : 'dashboard';
+  S.vista = ['dashboard', 'flujo', 'resumenes', 'movs', 'deudas', 'cargar', 'maestros'].indexOf(store.get('vista')) >= 0 ? store.get('vista') : 'dashboard';
   renderTabs(); render();
   ocultarLoader();
 }).catch(e => {
