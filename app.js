@@ -1531,6 +1531,7 @@ function armarFlujo() {
   const fin = masDias(hoy, FL.dias);
   const sal = saldosCuentas(), tj = tarjetaPendiente(), cf = cuotasFuturas();
   const ev = [], sinEstimar = [], enDolares = [];
+  let proxResumen = null;
   const poner = (fecha, concepto, monto, tipo) => { if (fecha <= fin) ev.push({ fecha, concepto, monto, tipo }); };
 
   // tarjeta: lo que ya se debe y el próximo resumen
@@ -1542,7 +1543,7 @@ function armarFlujo() {
     let prox = masMeses(tj.r.vencimiento, 1);
     while (prox < hoy) prox = masMeses(prox, 1);
     const monto = (PREFS.consumoCiclo || 0) + cf.prox.ARS;
-    if (monto > 0) poner(prox, 'Tarjeta: próximo resumen (tus consumos + cuotas)', -monto, 'tarjeta');
+    if (monto > 0) { proxResumen = { fecha: prox, monto }; poner(prox, 'Tarjeta: próximo resumen (tus consumos + cuotas)', -monto, 'tarjeta'); }
   }
 
   // cuotas de deudas (las de UVA se estiman con el último pago que cargaste)
@@ -1581,10 +1582,12 @@ function armarFlujo() {
   if (cobro) {
     const salidas = ev.filter(e => e.monto < 0 && e.fecha <= cobro), entradas = ev.filter(e => e.monto > 0 && e.fecha < cobro);
     const sumar = l => l.reduce((s, e) => s + e.monto, 0);
-    const libre = sal.total.ARS + sumar(salidas) + sumar(entradas);
+    // si el resumen de la tarjeta vence después de cobrar, igual ya está gastado: se reserva para no contarlo como libre
+    const reserva = proxResumen && proxResumen.fecha > cobro ? proxResumen : null;
+    const libre = sal.total.ARS + sumar(salidas) + sumar(entradas) - (reserva ? reserva.monto : 0);
     const tarjetaYa = salidas.filter(e => e.tipo === 'tarjeta' && e.fecha === hoy).reduce((s, e) => s - e.monto, 0);
     const dias = Math.max(1, diasEntre(hoy, cobro));
-    hasta = { cobro, dias, salidas, entradas, libre, porDia: libre > 0 ? libre / dias : 0, sinPagarTarjeta: libre + tarjetaYa, tarjetaYa };
+    hasta = { cobro, dias, salidas, entradas, reserva, libre, porDia: libre > 0 ? libre / dias : 0, sinPagarTarjeta: libre + tarjetaYa, tarjetaYa };
   }
   return { hoy, fin, saldo: sal.total.ARS, saldoUSD: sal.total.USD, ev, hasta, primerRojo, sinEstimar, enDolares, sueldos };
 }
@@ -1613,7 +1616,8 @@ function renderFlujo() {
     const h = F.hasta, neg = h.libre < 0;
     const lineas = [fila('Plata hoy en tus cuentas (pesos)', money(F.saldo))]
       .concat(h.salidas.map(e => fila(esc(e.concepto) + ' <span class="mut small">' + esc(fechaCorta(e.fecha).slice(0, 5)) + '</span>', money(e.monto))))
-      .concat(h.entradas.map(e => fila(esc(e.concepto) + ' <span class="mut small">' + esc(fechaCorta(e.fecha).slice(0, 5)) + '</span>', money(e.monto))));
+      .concat(h.entradas.map(e => fila(esc(e.concepto) + ' <span class="mut small">' + esc(fechaCorta(e.fecha).slice(0, 5)) + '</span>', money(e.monto))))
+      .concat(h.reserva ? [fila('Reservado: próximo resumen de la tarjeta <span class="mut small">vence el ' + esc(fechaCorta(h.reserva.fecha).slice(0, 5)) + ', lo pagás con tu cobro</span>', money(-h.reserva.monto))] : []);
     hasta = card('Hasta que cobres (' + esc(fechaCorta(h.cobro).slice(0, 5)) + ', en ' + h.dias + (h.dias === 1 ? ' día' : ' días') + ')',
       '<div class="gran ' + (neg ? 'bad' : '') + '">' + esc(money(h.libre)) + '</div>' +
       '<div class="mut" style="font-weight:400;margin:2px 0 14px">' + (neg ? 'No te alcanza con lo que tenés: te faltan ' + esc(fmtMoney(-h.libre, 'ARS')) + ' para cubrir todo hasta cobrar.' : 'Es lo que podés gastar hasta cobrar, <b style="color:var(--text)">~' + esc(fmtMoney(Math.round(h.porDia), 'ARS')) + ' por día</b>, después de pagar lo que ya tenés comprometido.') + '</div>' +
