@@ -205,6 +205,7 @@ function renderPage() {
   $('page').innerHTML =
     encabezado + avisosHtml() + revisionesHtml() +
     (enReglas ? '' : '<div class="pills">' + pills + '</div>') +
+    (S.id === 'fijos' && !enReglas ? resumenFijosHtml() : '') +
     '<div class="toolbar"><div class="search"><span class="lupa"></span><input id="q" placeholder="Buscar…" value="' + esc(S.q) + '"></div>' +
     '<button class="btn primary" id="nuevo">+ Agregar</button>' +
     '<span class="count">' + filas.length + ' de ' + (d.filas || []).length + ' en ' + esc(m.titulo) + '</span></div>' + cuerpo;
@@ -217,6 +218,7 @@ function renderPage() {
   $('page').querySelectorAll('tbody tr').forEach(tr => tr.onclick = () => abrir(Number(tr.dataset.n)));
   $('page').querySelectorAll('[data-fix]').forEach(b => b.onclick = () => corregir(Number(b.dataset.fix)));
   $('page').querySelectorAll('[data-ir]').forEach(b => b.onclick = () => irA(Number(b.dataset.ir)));
+  enlazarTC();
 }
 
 function avisosHtml() {
@@ -1513,7 +1515,7 @@ async function necesitaDatos() {
 }
 
 // ---------- Flujo de caja ----------
-const PREFS = { proximoCobro: '', consumoCiclo: 0 };
+const PREFS = { proximoCobro: '', consumoCiclo: 0, tcManual: 0 };
 const FL = { dias: 60 };
 
 const diasEntre = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000);
@@ -1532,7 +1534,6 @@ function armarFlujo() {
   const fin = cobro && masMeses(cobro, 1) > finVista ? masMeses(cobro, 1) : finVista;
   const sal = saldosCuentas(), tj = tarjetaPendiente(), cf = cuotasFuturas();
   const ev = [], sinEstimar = [], enDolares = [];
-  let proxResumen = null;
   const poner = (fecha, concepto, monto, tipo) => { if (fecha <= fin) ev.push({ fecha, concepto, monto, tipo }); };
 
   // tarjeta: lo que ya se debe y el próximo resumen
@@ -1543,8 +1544,10 @@ function armarFlujo() {
   if (tj && tj.r.vencimiento) {
     let prox = masMeses(tj.r.vencimiento, 1);
     while (prox < hoy) prox = masMeses(prox, 1);
-    const monto = (PREFS.consumoCiclo || 0) + cf.prox.ARS;
-    if (monto > 0) { proxResumen = { fecha: prox, monto }; poner(prox, 'Tarjeta: próximo resumen (tus consumos + cuotas)', -monto, 'tarjeta'); }
+    const fijosTarjeta = fijosActivos().filter(v => v.Movimiento === 'Gasto' && fijoEsDeTarjeta(v)).reduce((t, v) => t + fijoEnPesos(v), 0);
+    if (PREFS.consumoCiclo > 0) poner(prox, 'Tarjeta: lo que ya gastaste este ciclo', -PREFS.consumoCiclo, 'tarjeta');
+    if (cf.prox.ARS > 0) poner(prox, 'Tarjeta: cuotas del próximo resumen', -cf.prox.ARS, 'tarjeta');
+    if (fijosTarjeta > 0) poner(prox, 'Tarjeta: fijos del mes (seguro, suscripciones…)', -Math.round(fijosTarjeta * 100) / 100, 'tarjeta');
   }
 
   // cuotas de deudas (las de UVA se estiman con el último pago que cargaste)
@@ -1565,6 +1568,11 @@ function armarFlujo() {
 
   // fijos del mes que todavía no cargaste (gastos: se asume que salen ya; ingresos: llegan al cobrar)
   C.pendientes.filter(p => p.movimiento === 'Gasto' && p.moneda === 'ARS').forEach(p => poner(hoy, 'Fijo pendiente: ' + p.nombre, -Number(p.monto), 'fijo'));
+
+  // fijos del mes siguiente que salen de tus cuentas (se asume que salen justo después de cobrar)
+  const fijosCuenta = fijosActivos().filter(v => v.Movimiento === 'Gasto' && !fijoEsDeTarjeta(v) && v.Moneda === 'ARS');
+  const totFijosCuenta = fijosCuenta.reduce((t, v) => t + (Number(v.Monto) || 0), 0);
+  if (cobro && totFijosCuenta > 0) poner(masDias(cobro, 1), 'Fijos del mes (' + fijosCuenta.map(v => v.Nombre).join(', ') + ')', -totFijosCuenta, 'fijo');
 
   // cobros
   const sueldos = S.data.fijos.filas.filter(f => f.v.Movimiento === 'Ingreso' && f.v.Estado !== 'Inactivo' && f.v.Moneda === 'ARS').reduce((s, f) => s + (Number(f.v.Monto) || 0), 0);
@@ -1599,7 +1607,7 @@ function armarFlujo() {
 
 function guardarPref(datos) {
   Object.assign(PREFS, datos);
-  renderFlujo();
+  render();
   llamar('guardarPrefs', datos).catch(e => toast((e && e.message) || 'No se pudo guardar'));
 }
 
@@ -1612,7 +1620,7 @@ function renderFlujo() {
 
   const datos = card('Tus datos', '<div class="dgrid" style="gap:0 16px"><label class="f">¿Cuándo cobrás?<input class="in" type="date" id="fcobro" value="' + esc(PREFS.proximoCobro) + '"></label>' +
     '<label class="f">Lo que ya gastaste con la tarjeta este ciclo<input class="in" id="fconsumo" inputmode="decimal" autocomplete="off" placeholder="0" value="' + (PREFS.consumoCiclo ? esc(String(PREFS.consumoCiclo).replace('.', ',')) : '') + '">' +
-    '<div class="ayuda">Mirálo en el homebanking (sin cuotas: las cuotas ya las sumo yo). Es para estimar el próximo resumen.</div></label></div>');
+    '<div class="ayuda">Mirálo en el homebanking, sin contar las cuotas ni tus fijos de la tarjeta (seguro, suscripciones…): esos los sumo yo. Es para estimar el próximo resumen.</div></label></div>');
 
   let hasta;
   if (!F.hasta) {
@@ -1641,7 +1649,7 @@ function renderFlujo() {
         'Después de cobrar el ' + esc(fechaCorta(h.cobro).slice(0, 5)) + ' y pagar la tarjeta, las cuotas y lo comprometido hasta el ' + esc(fechaCorta(d.siguiente).slice(0, 5)) + ', te quedan para gastar, <b style="color:var(--text)">~' + esc(fmtMoney(Math.round(d.porDia2), 'ARS')) + ' por día</b>.') + '</div>' +
       (h.libre < 0 ? '<div class="aviso" style="margin-bottom:12px">Ojo: antes de cobrar te faltan ' + esc(fmtMoney(-h.libre, 'ARS')) + '. Para llegar al cobro vas a tener que postergar algún pago (por ejemplo la tarjeta vencida, que genera intereses) o usar otra plata. El detalle está en “Para llegar al cobro”.</div>' : '') +
       lin2.join('') + '<div class="dfila total"><span class="n"><b>Te queda para gastar</b></span><span class="mono">' + esc(money(d.libre2)) + '</span></div>' +
-      '<div class="mut small" style="margin-top:10px">No incluye los fijos del mes que viene ni gastos de efectivo o débito que todavía no hiciste.</div>');
+      '<div class="mut small" style="margin-top:10px">Incluye tus fijos del mes. No incluye gastos de efectivo o débito que todavía no hiciste.</div>');
   }
 
   const filasTl = F.ev.length ? F.ev.map(e => '<div class="tl' + (e.saldo < 0 ? ' rojo' : '') + '"><span class="mono mut">' + esc(fechaCorta(e.fecha).slice(0, 5)) + '</span><span class="n">' + esc(e.concepto) +
@@ -1655,7 +1663,8 @@ function renderFlujo() {
   const notas = [];
   if (F.enDolares.length) notas.push('Las cuotas en dólares (' + F.enDolares.map(d => esc(d.nombre)).join(', ') + ') no están acá: salen de tus cuentas en dólares (tenés ' + esc(fmtMoney(F.saldoUSD, 'USD')) + ').');
   if (F.sinEstimar.length) notas.push('No pude estimar la cuota de ' + F.sinEstimar.map(esc).join(', ') + ' (está en UVA y todavía no cargaste ningún pago).');
-  notas.push('No incluye gastos de efectivo o débito que todavía no hiciste, ni los fijos del mes que viene. Cuanto más cargues, más preciso es.');
+  if (fijosActivos().some(v => v.Moneda === 'USD' && v.Movimiento === 'Gasto')) notas.push('Los fijos en dólares se pasan a pesos. ' + textoTC() + ' La tarjeta puede cobrar más por impuestos.');
+  notas.push('No incluye gastos de efectivo o débito que todavía no hiciste. Cuanto más cargues, más preciso es.');
 
   $('page').innerHTML = '<div class="titulo-fila"><h1>Flujo de caja</h1></div>' + datos + desp + hasta + tl +
     '<div class="mut small" style="max-width:760px">' + notas.join('<br>') + '</div>';
@@ -1666,8 +1675,55 @@ function renderFlujo() {
   $('horiz').querySelectorAll('button').forEach(b => b.onclick = () => { FL.dias = Number(b.dataset.d); renderFlujo(); });
 }
 
+// ---------- Cotización del dólar y total de fijos ----------
+const TC = { venta: 0, fecha: '', fuente: '' };
+const tcEfectivo = () => (PREFS.tcManual > 0 ? PREFS.tcManual : TC.venta) || 0;
+
+function cargarTC() {
+  llamarCore('cotizacion', []).then(r => {
+    if (!r) return;
+    Object.assign(TC, r);
+    if ((S.vista === 'flujo' || (S.vista === 'maestros' && S.id === 'fijos')) && !hayEdicionAbierta()) render();
+  }).catch(() => { /* sin cotización automática: se puede poner una a mano */ });
+}
+
+const fijosActivos = () => S.data.fijos.filas.map(f => f.v).filter(v => v.Estado !== 'Inactivo');
+const fijoEsDeTarjeta = v => S.data.tarjetas.filas.some(t => t.v.Nombre === v['Medio de Pago']);
+const fijoEnPesos = v => (Number(v.Monto) || 0) * (v.Moneda === 'USD' ? tcEfectivo() : 1);
+
+function textoTC() {
+  const tc = tcEfectivo();
+  if (!tc) return 'Todavía no tengo la cotización del dólar: escribila abajo para ver el total en pesos.';
+  const manual = PREFS.tcManual > 0;
+  return 'Dólar a ' + fmtMoney(tc, 'ARS') + (manual ? ' (cotización que pusiste vos)' : ' · ' + (TC.fuente || 'Dólar oficial') + (TC.fecha ? ', ' + fechaCorta(TC.fecha.slice(0, 10)) : ''));
+}
+
+function resumenFijosHtml() {
+  const fl = fijosActivos(), tc = tcEfectivo();
+  const suma = (mov, mon) => fl.filter(v => v.Movimiento === mov && v.Moneda === mon).reduce((s, v) => s + (Number(v.Monto) || 0), 0);
+  const g = { ARS: suma('Gasto', 'ARS'), USD: suma('Gasto', 'USD') }, i = { ARS: suma('Ingreso', 'ARS'), USD: suma('Ingreso', 'USD') };
+  const totG = g.ARS + g.USD * tc, totI = i.ARS + i.USD * tc;
+  const fila = (a, b, cls) => '<div class="dfila ' + (cls || '') + '"><span class="n">' + a + '</span><span class="mono">' + b + '</span></div>';
+  const enTarjeta = fl.filter(v => v.Movimiento === 'Gasto' && fijoEsDeTarjeta(v)).reduce((s, v) => s + fijoEnPesos(v), 0);
+  return '<div class="card cuerpo-c" style="max-width:640px"><h2 class="titulo-c">Total de fijos al mes (en pesos)</h2>' +
+    fila('Gastos fijos en pesos', esc(fmtMoney(g.ARS, 'ARS'))) +
+    (g.USD ? fila('Gastos fijos en dólares <span class="mut small">' + (tc ? esc(fmtMoney(g.USD, 'USD')) + ' × ' + esc(fmtNum(tc)) : esc(fmtMoney(g.USD, 'USD')) + ', sin cotización') + '</span>', tc ? esc(fmtMoney(Math.round(g.USD * tc * 100) / 100, 'ARS')) : '—') : '') +
+    fila('<b>Total de gastos fijos</b>' + (enTarjeta ? ' <span class="mut small">· ' + esc(fmtMoney(Math.round(enTarjeta), 'ARS')) + ' van por la tarjeta</span>' : ''), '<b>' + esc(fmtMoney(Math.round(totG * 100) / 100, 'ARS')) + '</b>', 'total') +
+    (totI ? fila('Ingresos fijos', esc(fmtMoney(Math.round(totI * 100) / 100, 'ARS'))) + fila('Te queda después de los fijos', esc((totI - totG < 0 ? '− ' : '') + fmtMoney(Math.abs(Math.round((totI - totG) * 100) / 100), 'ARS'))) : '') +
+    '<div class="mut small" style="margin-top:12px">' + esc(textoTC()) + '</div>' +
+    '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap"><input class="in" id="tcmanual" inputmode="decimal" autocomplete="off" placeholder="Usar otra cotización" value="' + (PREFS.tcManual > 0 ? esc(String(PREFS.tcManual).replace('.', ',')) : '') + '" style="width:200px;margin:0">' +
+    (PREFS.tcManual > 0 ? '<button class="mini" id="tcauto">Volver a la automática</button>' : '') + '</div></div>';
+}
+
+function enlazarTC() {
+  const m = $('tcmanual'), a = $('tcauto');
+  if (m) m.onchange = () => { const n = numAR(m.value); guardarPref({ tcManual: isFinite(n) && n > 0 ? n : 0 }); };
+  if (a) a.onclick = () => guardarPref({ tcManual: 0 });
+}
+
 // ---------- inicio ----------
 traerTodo().catch(() => { /* si falla, cada solapa lo vuelve a pedir */ });
+cargarTC();
 llamar('iniciar').then(r => {
   S.schemas = r.schemas; S.data = r.data; S.rev = r.revisiones; S.avisos = r.avisos;
   S.schemas.forEach(s => { S.byId[s.id] = s; });
