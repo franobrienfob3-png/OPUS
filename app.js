@@ -1261,7 +1261,11 @@ function renderDashboard() {
   const suma = (lista, tipo, mon) => lista.filter(m => m.tipo === tipo && m.moneda === mon).reduce((s, m) => s + m.monto, 0);
   const ing = { ARS: suma(base, 'Ingreso', 'ARS'), USD: suma(base, 'Ingreso', 'USD') };
   const gas = { ARS: suma(base, 'Gasto', 'ARS'), USD: suma(base, 'Gasto', 'USD') };
-  const ahorro = { ARS: ing.ARS - gas.ARS, USD: ing.USD - gas.USD };
+  // cuotas de deudas pagadas: no son gasto (bajan la deuda) pero sí son plata que sale, así que descuentan del ahorro
+  const sumaDeuda = (lista, mon) => lista.filter(m => m.tipo === 'Pago Deuda' && m.moneda === mon).reduce((s, m) => s + m.monto, 0);
+  const periodoDeuda = DB.movs.filter(m => m.tipo === 'Pago Deuda' && enPer(m, per));
+  const cuotas = { ARS: sumaDeuda(periodoDeuda, 'ARS'), USD: sumaDeuda(periodoDeuda, 'USD') };
+  const ahorro = { ARS: ing.ARS - gas.ARS - cuotas.ARS, USD: ing.USD - gas.USD - cuotas.USD };
   const gARS = base.filter(m => m.tipo === 'Gasto' && m.moneda === 'ARS');
   const nMeses = Math.max(1, new Set(base.map(m => m.fecha.slice(0, 7))).size);
   const esMes = per !== 'todo' && per !== 'anio';
@@ -1300,7 +1304,7 @@ function renderDashboard() {
   // evolución de los últimos 6 meses con datos
   const ult = meses.slice(0, 6).reverse().map(ym => {
     const l = util.filter(m => m.fecha.slice(0, 7) === ym);
-    return { ym, i: suma(l, 'Ingreso', 'ARS'), g: suma(l, 'Gasto', 'ARS') };
+    return { ym, i: suma(l, 'Ingreso', 'ARS'), g: suma(l, 'Gasto', 'ARS') + sumaDeuda(DB.movs.filter(m => m.fecha.slice(0, 7) === ym), 'ARS') };
   });
   const maxEv = Math.max(1, ...ult.map(x => Math.max(x.i, x.g)));
 
@@ -1323,8 +1327,8 @@ function renderDashboard() {
   const tasa = ing.ARS ? porc(ahorro.ARS, ing.ARS) : null;
   const kpis = '<div class="kpis cinco">' +
     kpi('Ingresos', fmtMoney(ing.ARS, 'ARS'), ing.USD ? fmtMoney(ing.USD, 'USD') : 'en pesos') +
-    kpi('Gastos', fmtMoney(gas.ARS, 'ARS'), gas.USD ? fmtMoney(gas.USD, 'USD') + ' en dólares' : (esMes && gPrevio ? (gas.ARS >= gPrevio ? '▲ ' : '▼ ') + Math.abs(porc(gas.ARS - gPrevio, gPrevio)) + '% vs mes anterior' : 'en pesos'), 'var(--danger)') +
-    kpi('Ahorro del período', (ahorro.ARS < 0 ? '− ' : '') + fmtMoney(Math.abs(ahorro.ARS), 'ARS'), tasa === null ? 'sin ingresos cargados' : tasa + '% de lo que ingresó') +
+    kpi('Gastos', fmtMoney(gas.ARS, 'ARS'), (gas.USD ? fmtMoney(gas.USD, 'USD') + ' en dólares · ' : '') + (cuotas.ARS || cuotas.USD ? 'más ' + dosMon(cuotas.ARS, cuotas.USD) + ' en cuotas de deudas' : 'en pesos'), 'var(--danger)') +
+    kpi('Ahorro del período', (ahorro.ARS < 0 ? '− ' : '') + fmtMoney(Math.abs(ahorro.ARS), 'ARS'), tasa === null ? 'sin ingresos cargados' : tasa + '% de lo que ingresó, después de cuotas de deudas') +
     kpi('Patrimonio estimado', (pat.ARS < 0 ? '− ' : '') + fmtMoney(Math.abs(pat.ARS), 'ARS'), 'en pesos · ' + (pat.USD < 0 ? '− ' : '') + fmtMoney(Math.abs(pat.USD), 'USD')) +
     kpi('Deuda de tarjeta', tj ? fmtMoney(tj.ars, 'ARS') : '—', tj ? (tj.usd ? fmtMoney(tj.usd, 'USD') + ' · ' : '') + 'pago mínimo ' + fmtMoney(tj.r.pagoMinimo, 'ARS') : 'sin resúmenes importados') + '</div>';
 
@@ -1337,7 +1341,7 @@ function renderDashboard() {
 
   const evolucion = ult.length ? '<div class="evol">' + ult.map(x => '<div class="evcol"><div class="evbars"><i class="ing" style="height:' + Math.round(x.i / maxEv * 100) + '%" title="Ingresos"></i><i class="gas" style="height:' + Math.round(x.g / maxEv * 100) + '%" title="Gastos"></i></div>' +
     '<span class="mut small">' + esc(MESES_CORTO[Number(x.ym.slice(5, 7)) - 1]) + '</span><span class="mono small ' + (x.i - x.g < 0 ? 'neg' : '') + '">' + (x.i - x.g < 0 ? '−' : '') + esc(fmtNum(Math.round(Math.abs(x.i - x.g) / 1000))) + 'k</span></div>').join('') + '</div>' +
-    '<div class="mut small" style="margin-top:8px"><span class="sw ing"></span> Ingresos &nbsp; <span class="sw gas"></span> Gastos &nbsp; · debajo de cada mes: lo que sobró o faltó, en miles de pesos</div>' : '';
+    '<div class="mut small" style="margin-top:8px"><span class="sw ing"></span> Ingresos &nbsp; <span class="sw gas"></span> Gastos y cuotas de deudas &nbsp; · debajo de cada mes: lo que sobró o faltó, en miles de pesos</div>' : '';
 
   const presHtml = pres.length
     ? '<div class="dfila" style="margin-bottom:10px"><span class="n"><b>Total</b></span><span class="mono mut">' + porc(presReal, presTope) + '%</span><span class="mono">' + esc(fmtMoney(presReal, 'ARS')) + ' / ' + esc(fmtMoney(presTope, 'ARS')) + '</span></div>' + barra(porc(presReal, presTope), presReal > presTope) +
