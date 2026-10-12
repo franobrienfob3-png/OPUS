@@ -265,3 +265,8 @@ label.recl { display:flex; gap:8px; align-items:center; color:var(--text-2); cur
 .donutbox.chico .donut { width:160px; height:160px; }
 .donutbox.chico .donut .hole { inset:22px; }
 @media (max-width:900px) { .dgrid { grid-template-columns:1fr; } .donutbox.chico { grid-template-columns:1fr; justify-items:center; } }
+
+/* Esqueleto mientras cargan los datos */
+.esq { background:linear-gradient(90deg, var(--surface) 0%, var(--surface-2) 50%, var(--surface) 100%); background-size:200% 100%; animation:esq 1.3s ease-in-out infinite; border-color:transparent; }
+@keyframes esq { 0% { background-position:200% 0; } 100% { background-position:-200% 0; } }
+@media (prefers-reduced-motion: reduce) { .esq { animation:none; } }

@@ -92,16 +92,25 @@ async function enviar(fn, args) {
   return j.result;
 }
 
+async function llamarCore(fn, args) {
+  if (!tokenVigente(TOKEN)) await pedirLogin();
+  try { return await enviar(fn, args); }
+  catch (e) {
+    if (!e.auth) throw e;
+    guardarToken('');
+    await pedirLogin();
+    return await enviar(fn, args);
+  }
+}
+
+const MODIFICADORES = ['guardarFila', 'cambiarEstado', 'eliminarFila', 'aplicarCorreccion', 'confirmarImportacion',
+  'registrarMovimiento', 'actualizarMovimiento', 'editarMovimiento', 'eliminarMovimiento'];
+
 async function llamar(fn, ...args) {
   try {
-    if (!tokenVigente(TOKEN)) await pedirLogin();
-    try { return await enviar(fn, args); }
-    catch (e) {
-      if (!e.auth) throw e;
-      guardarToken('');
-      await pedirLogin();
-      return await enviar(fn, args);
-    }
+    const r = await llamarCore(fn, args);
+    if (MODIFICADORES.indexOf(fn) >= 0) invalidarTodo();
+    return r;
   } finally { ocultarLoader(); }
 }
 
@@ -148,10 +157,9 @@ function renderTabs() {
 
 function irVista(v) {
   S.vista = v; S.q = ''; store.set('vista', v);
-  if (v === 'deudas') D.lista = null;
-  if (v === 'dashboard') DB.movs = null;
-  if (v === 'resumenes') { R.lista = null; R.sel = ''; }
-  if (v === 'cargar') { C.recientes = null; reiniciarCarga(true); }
+  if (v === 'resumenes') R.sel = '';
+  if (v === 'cargar') reiniciarCarga(true);
+  if (K.p && Date.now() - K.ts > 90000 && ['dashboard', 'movs', 'deudas', 'resumenes', 'cargar'].indexOf(v) >= 0) refrescarSilencioso();
   if (v === 'maestros' && S.id === 'reglas') S.id = S.schemas.filter(s => s.id !== 'reglas')[0].id;
   if (v === 'reglas') S.id = 'reglas';
   cerrar(); renderTabs(); render();
@@ -661,17 +669,6 @@ const mesesDe = lista => Array.from(new Set(lista.map(m => m.fecha.slice(0, 7)))
 const sumaMov = lista => lista.reduce((s, m) => s + m.monto, 0);
 const mv = n => n + (n === 1 ? ' movimiento' : ' movimientos');
 
-async function cargarMovs() {
-  mostrarLoader();
-  try {
-    M.movs = (await llamar('listarMovimientos')).movimientos;
-    const meses = mesesDe(M.movs);
-    if (M.periodo !== 'todo' && M.periodo !== 'anio' && meses.indexOf(M.periodo) < 0) M.periodo = meses[0] || 'todo';
-  } catch (e) { toast((e && e.message) || 'No se pudieron cargar los movimientos'); M.movs = []; }
-  ocultarLoader();
-  if (S.vista === 'movs') renderMovs();
-}
-
 function mapasGastos() {
   const cat = {}, nat = {};
   S.data.gastos.filas.forEach(f => { cat[f.v.Subcategoria] = f.v.Categoria; nat[f.v.Subcategoria] = f.v.Naturaleza; });
@@ -685,7 +682,7 @@ function enPeriodo(m, anio) {
 }
 
 function renderMovs() {
-  if (M.movs === null) { cargarMovs(); return; }
+  if (M.movs === null) { necesitaDatos(); return; }
   if (!M.movs.length) {
     $('page').innerHTML = '<div><h1>Movimientos</h1></div><div class="card vacio">Todavía no hay movimientos. Importá un resumen desde <b style="color:var(--text)">Resúmenes</b>.' +
       '<div style="margin-top:16px"><button class="btn primary" id="irimp">Ir a Resúmenes</button></div></div>';
@@ -887,14 +884,6 @@ const D = { lista: null, hoy: '' };
 const NOMBRE_MON = { ARS: 'pesos', USD: 'dólares', UVA: 'UVAs' };
 const redondeo2 = n => Math.round(n * 100) / 100;
 
-async function cargarDeudas() {
-  mostrarLoader();
-  try { const r = await llamar('listarDeudas'); D.lista = r.deudas; D.hoy = r.hoy; }
-  catch (e) { toast((e && e.message) || 'No se pudieron cargar las deudas'); D.lista = []; }
-  ocultarLoader();
-  if (S.vista === 'deudas') renderDeudas();
-}
-
 function tarjetaDeuda(d) {
   const pct = d.q ? Math.round(d.pagadas / d.q * 100) : 0;
   const vto = d.proximo ? 'Próximo vencimiento: ' + fechaCorta(d.proximo) + (d.proximo < D.hoy ? ' (vencido)' : '') : '';
@@ -911,7 +900,7 @@ function tarjetaDeuda(d) {
 }
 
 function renderDeudas() {
-  if (D.lista === null) { cargarDeudas(); return; }
+  if (D.lista === null) { necesitaDatos(); return; }
   if (!D.lista.length) {
     $('page').innerHTML = '<div><h1>Deudas</h1></div><div class="card vacio">No hay deudas cargadas. Agregalas en <b style="color:var(--text)">DDMM → Deudas</b>.</div>';
     return;
@@ -966,14 +955,6 @@ function reiniciarCarga(conservarCuenta) {
   C.error = '';
 }
 reiniciarCarga(false);
-
-async function cargarDatosCargar() {
-  mostrarLoader();
-  try { const r = await llamar('datosCargar'); C.recientes = r.recientes; C.pendientes = r.pendientes; }
-  catch (e) { toast((e && e.message) || 'No se pudieron cargar los datos'); C.recientes = []; C.pendientes = []; }
-  ocultarLoader();
-  if (S.vista === 'cargar') renderCargar();
-}
 
 const optCuentas = (actual, excluir) => '<option value="">Elegí una cuenta</option>' +
   cuentasActivas().filter(c => c.Nombre !== excluir).map(c => op(c.Nombre, actual, c.Nombre + ' (' + c.Moneda + ')')).join('');
@@ -1060,7 +1041,7 @@ function filaReciente(m) {
 }
 
 function renderCargar() {
-  if (C.recientes === null) { cargarDatosCargar(); return; }
+  if (C.recientes === null) { necesitaDatos(); return; }
   if (!C.v.fecha) C.v.fecha = hoyLocal();
   const pend = C.pendientes.length
     ? '<div class="card cuerpo-c"><h2 class="titulo-c">Pendientes de este mes</h2>' + C.pendientes.map((p, i) =>
@@ -1146,21 +1127,11 @@ async function registrarPendiente(i) {
 // ---------- Resúmenes (historial y detalle) ----------
 const R = { lista: null, movs: [], sel: '' };
 
-async function cargarResumenes() {
-  mostrarLoader();
-  try {
-    const r = await Promise.all([llamar('listarResumenes'), llamar('listarMovimientos')]);
-    R.lista = r[0].resumenes; R.movs = r[1].movimientos;
-  } catch (e) { toast((e && e.message) || 'No se pudieron cargar los resúmenes'); R.lista = []; R.movs = []; }
-  ocultarLoader();
-  if (S.vista === 'resumenes') renderResumenes();
-}
-
 const tarjetaCorta = n => 'Tarjeta ' + (String(n).length > 4 ? '•••• ' + String(n).slice(-4) : n);
 const movsDe = r => R.movs.filter(m => m.origen === r.origen);
 
 function renderResumenes() {
-  if (R.lista === null) { cargarResumenes(); return; }
+  if (R.lista === null) { necesitaDatos(); return; }
   const sel = R.lista.filter(r => r.cierre === R.sel)[0];
   if (sel) { renderDetalleResumen(sel); return; }
   const boton = '<button class="btn primary" id="impnuevo">Importar resumen</button>';
@@ -1214,21 +1185,6 @@ function renderDetalleResumen(r) {
 
 // ---------- Dashboard ----------
 const DB = { movs: null, deudas: [], res: [], hoy: '', periodo: '' };
-
-async function cargarDashboard() {
-  mostrarLoader();
-  const seguro = async (fn, vacio) => { try { return await llamar(fn); } catch (e) { return vacio; } };
-  try {
-    const m = await llamar('listarMovimientos');
-    const d = await seguro('listarDeudas', { deudas: [], hoy: '' });
-    const r = await seguro('listarResumenes', { resumenes: [] });
-    DB.movs = m.movimientos; DB.deudas = d.deudas; DB.hoy = d.hoy || hoyLocal(); DB.res = r.resumenes;
-    const meses = mesesDe(DB.movs.filter(x => x.tipo === 'Gasto' || x.tipo === 'Ingreso'));
-    if (DB.periodo !== 'todo' && DB.periodo !== 'anio' && meses.indexOf(DB.periodo) < 0) DB.periodo = meses[0] || 'todo';
-  } catch (e) { toast((e && e.message) || 'No se pudo armar el dashboard'); DB.movs = []; }
-  ocultarLoader();
-  if (S.vista === 'dashboard') renderDashboard();
-}
 
 const mesAnterior = ym => { let a = Number(ym.slice(0, 4)), m = Number(ym.slice(5, 7)) - 1; if (m < 1) { m = 12; a--; } return a + '-' + ('0' + m).slice(-2); };
 const dosMon = (ars, usd) => fmtMoney(ars, 'ARS') + (usd ? '  ·  ' + fmtMoney(usd, 'USD') : '');
@@ -1289,7 +1245,7 @@ function barra(pct, rojo) {
 }
 
 function renderDashboard() {
-  if (DB.movs === null) { cargarDashboard(); return; }
+  if (DB.movs === null) { necesitaDatos(); return; }
   const util = DB.movs.filter(m => m.tipo === 'Gasto' || m.tipo === 'Ingreso');
   const sal = saldosCuentas(), tj = tarjetaPendiente(), cf = cuotasFuturas();
   if (!util.length && !sal.lista.some(c => c.mov)) {
@@ -1442,7 +1398,70 @@ function renderDashboard() {
   $('dbper').onchange = e => { DB.periodo = e.target.value; renderDashboard(); };
 }
 
+// ---------- Datos compartidos entre solapas ----------
+// Un solo pedido ("cargarTodo") alimenta Movimientos, Deudas, Resúmenes, Dashboard y Cargar.
+// Las solapas se dibujan al instante con lo que ya hay y se refrescan en segundo plano.
+const K = { ts: 0, p: null, h: null };
+const TITULOS = { dashboard: 'Dashboard', cargar: 'Cargar', movs: 'Movimientos', deudas: 'Deudas', resumenes: 'Resúmenes' };
+
+function traerTodo(forzar) {
+  if (!forzar && K.p) return K.p;
+  const p = llamarCore('cargarTodo', []);
+  K.p = p; K.ts = Date.now();
+  p.catch(() => { if (K.p === p) { K.p = null; K.ts = 0; } });
+  return p;
+}
+
+function aplicarTodo(r) {
+  M.movs = r.movimientos;
+  const meses = mesesDe(M.movs);
+  if (M.periodo !== 'todo' && M.periodo !== 'anio' && meses.indexOf(M.periodo) < 0) M.periodo = meses[0] || 'todo';
+  D.lista = r.deudas; D.hoy = r.hoy;
+  R.lista = r.resumenes; R.movs = r.movimientos;
+  DB.movs = r.movimientos; DB.deudas = r.deudas; DB.hoy = r.hoy || hoyLocal(); DB.res = r.resumenes;
+  const mu = mesesDe(DB.movs.filter(x => x.tipo === 'Gasto' || x.tipo === 'Ingreso'));
+  if (DB.periodo !== 'todo' && DB.periodo !== 'anio' && mu.indexOf(DB.periodo) < 0) DB.periodo = mu[0] || 'todo';
+  C.recientes = r.cargar.recientes; C.pendientes = r.cargar.pendientes;
+}
+
+/** Algo cambió en la planilla: lo guardado ya no sirve. Se vuelve a pedir en un rato, sin que tengas que esperar. */
+function invalidarTodo() {
+  K.ts = 0; K.p = null;
+  M.movs = null; D.lista = null; R.lista = null; DB.movs = null; C.recientes = null;
+  clearTimeout(K.h);
+  K.h = setTimeout(() => { if (!K.p) refrescarSilencioso(); }, 1500);
+}
+
+const hayEdicionAbierta = () => {
+  const modal = $('modal'), a = document.activeElement;
+  return (modal && !modal.classList.contains('hide')) || (a && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName) && $('page').contains(a));
+};
+
+async function refrescarSilencioso() {
+  try { aplicarTodo(await traerTodo(true)); } catch (e) { return; }
+  if (['dashboard', 'movs', 'deudas', 'resumenes'].indexOf(S.vista) >= 0 && !hayEdicionAbierta()) render();
+}
+
+function esqueleto(vista) {
+  const bloque = alto => '<div class="card esq" style="height:' + alto + 'px"></div>';
+  return '<div class="titulo-fila"><h1>' + esc(TITULOS[vista] || '') + '</h1></div>' +
+    (vista === 'cargar' ? bloque(420) : '<div class="kpis">' + [1, 2, 3, 4].map(() => bloque(86)).join('') + '</div>' + bloque(260) + bloque(200));
+}
+
+/** Una solapa necesita datos que todavía no hay: se muestra un esqueleto (no la solapa anterior) hasta que lleguen. */
+async function necesitaDatos() {
+  const vista = S.vista;
+  $('page').innerHTML = esqueleto(vista);
+  try { aplicarTodo(await traerTodo()); }
+  catch (e) {
+    toast((e && e.message) || 'No se pudieron cargar los datos');
+    aplicarTodo({ movimientos: [], deudas: [], hoy: '', resumenes: [], cargar: { recientes: [], pendientes: [] } });
+  }
+  if (S.vista === vista) render();
+}
+
 // ---------- inicio ----------
+traerTodo().catch(() => { /* si falla, cada solapa lo vuelve a pedir */ });
 llamar('iniciar').then(r => {
   S.schemas = r.schemas; S.data = r.data; S.rev = r.revisiones; S.avisos = r.avisos;
   S.schemas.forEach(s => { S.byId[s.id] = s; });
