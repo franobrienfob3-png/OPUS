@@ -1622,7 +1622,7 @@ function renderFlujo() {
     const lineas = [fila('Plata hoy en tus cuentas (pesos)', money(F.saldo))]
       .concat(h.salidas.map(e => fila(esc(e.concepto) + ' <span class="mut small">' + esc(fechaCorta(e.fecha).slice(0, 5)) + '</span>', money(e.monto))))
       .concat(h.entradas.map(e => fila(esc(e.concepto) + ' <span class="mut small">' + esc(fechaCorta(e.fecha).slice(0, 5)) + '</span>', money(e.monto))));
-    hasta = card('Hasta que cobres (' + esc(fechaCorta(h.cobro).slice(0, 5)) + ', en ' + h.dias + (h.dias === 1 ? ' día' : ' días') + ')',
+    hasta = card('Para llegar al cobro (' + esc(fechaCorta(h.cobro).slice(0, 5)) + ', en ' + h.dias + (h.dias === 1 ? ' día' : ' días') + ')',
       '<div class="gran ' + (neg ? 'bad' : '') + '">' + esc(money(h.libre)) + '</div>' +
       '<div class="mut" style="font-weight:400;margin:2px 0 14px">' + (neg ? 'No te alcanza con lo que tenés: te faltan ' + esc(fmtMoney(-h.libre, 'ARS')) + ' para cubrir todo hasta cobrar.' : 'Es lo que podés gastar hasta cobrar, <b style="color:var(--text)">~' + esc(fmtMoney(Math.round(h.porDia), 'ARS')) + ' por día</b>, después de pagar lo que ya tenés comprometido.') + '</div>' +
       lineas.join('') + '<div class="dfila total"><span class="n"><b>Te queda para gastar hasta cobrar</b></span><span class="mono">' + esc(money(h.libre)) + '</span></div>' +
@@ -1635,10 +1635,11 @@ function renderFlujo() {
     const signo = n => (n < 0 ? '− ' : '+ ') + fmtMoney(Math.abs(n), 'ARS');
     const lin2 = [fila('Lo que te queda al llegar al cobro', money(h.libre))]
       .concat(d.post.map(e => fila(esc(e.concepto) + ' <span class="mut small">' + esc(fechaCorta(e.fecha).slice(0, 5)) + '</span>', esc(signo(e.monto)))));
-    desp = card('Después de cobrar (hasta el ' + esc(fechaCorta(d.siguiente).slice(0, 5)) + ', ' + d.dias2 + ' días)',
+    desp = card('Saldo que te queda después de cobrar',
       '<div class="gran ' + (neg2 ? 'bad' : '') + '">' + esc(money(d.libre2)) + '</div>' +
-      '<div class="mut" style="font-weight:400;margin:2px 0 14px">' + (neg2 ? 'Aun después de cobrar, con lo ya comprometido no llegás al siguiente cobro: te faltan ' + esc(fmtMoney(-d.libre2, 'ARS')) + '.' :
-        'Es lo que te queda para gastar entre este cobro y el siguiente, <b style="color:var(--text)">~' + esc(fmtMoney(Math.round(d.porDia2), 'ARS')) + ' por día</b>, después de pagar el resumen de la tarjeta y las cuotas.') + '</div>' +
+      '<div class="mut" style="font-weight:400;margin:2px 0 14px">' + (neg2 ? 'Cobrando el ' + esc(fechaCorta(h.cobro).slice(0, 5)) + ' y pagando todo lo comprometido hasta el ' + esc(fechaCorta(d.siguiente).slice(0, 5)) + ', te faltan ' + esc(fmtMoney(-d.libre2, 'ARS')) + ' para llegar al siguiente cobro.' :
+        'Después de cobrar el ' + esc(fechaCorta(h.cobro).slice(0, 5)) + ' y pagar la tarjeta, las cuotas y lo comprometido hasta el ' + esc(fechaCorta(d.siguiente).slice(0, 5)) + ', te quedan para gastar, <b style="color:var(--text)">~' + esc(fmtMoney(Math.round(d.porDia2), 'ARS')) + ' por día</b>.') + '</div>' +
+      (h.libre < 0 ? '<div class="aviso" style="margin-bottom:12px">Ojo: antes de cobrar te faltan ' + esc(fmtMoney(-h.libre, 'ARS')) + '. Para llegar al cobro vas a tener que postergar algún pago (por ejemplo la tarjeta vencida, que genera intereses) o usar otra plata. El detalle está en “Para llegar al cobro”.</div>' : '') +
       lin2.join('') + '<div class="dfila total"><span class="n"><b>Te queda para gastar</b></span><span class="mono">' + esc(money(d.libre2)) + '</span></div>' +
       '<div class="mut small" style="margin-top:10px">No incluye los fijos del mes que viene ni gastos de efectivo o débito que todavía no hiciste.</div>');
   }
@@ -1656,7 +1657,7 @@ function renderFlujo() {
   if (F.sinEstimar.length) notas.push('No pude estimar la cuota de ' + F.sinEstimar.map(esc).join(', ') + ' (está en UVA y todavía no cargaste ningún pago).');
   notas.push('No incluye gastos de efectivo o débito que todavía no hiciste, ni los fijos del mes que viene. Cuanto más cargues, más preciso es.');
 
-  $('page').innerHTML = '<div class="titulo-fila"><h1>Flujo de caja</h1></div>' + datos + hasta + desp + tl +
+  $('page').innerHTML = '<div class="titulo-fila"><h1>Flujo de caja</h1></div>' + datos + desp + hasta + tl +
     '<div class="mut small" style="max-width:760px">' + notas.join('<br>') + '</div>';
 
   // mientras escribís el año (2 → 20 → 202 → 2026) el navegador ya da fechas "válidas": se espera a que el año sea real
