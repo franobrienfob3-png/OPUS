@@ -794,49 +794,80 @@ function renderMovs() {
 function abrirMov(id) {
   const m = M.movs.find(x => x.id === id);
   if (!m) return;
-  M.edit = { id, m, sub: m.subcategoria === 'Sin categorizar' ? '' : m.subcategoria, asig: m.asignado, rec: false, par: true, txt: textoSugerido(m.desc), borrar: false };
+  const txt = n => n === '' || n == null ? '' : String(n).replace('.', ',');
+  M.edit = { id, m, fecha: m.fecha, desc: m.desc, monto: txt(m.monto), cuenta: m.cuenta, destino: m.destino, montoDest: txt(m.montoDestino),
+    sub: m.subcategoria === 'Sin categorizar' ? '' : m.subcategoria, asig: m.asignado, rec: false, par: true, txt: textoSugerido(m.desc), borrar: false };
   renderEditMov();
 }
 
 function renderEditMov() {
   const E = M.edit, m = E.m;
-  const editable = ['Gasto', 'Adelanto', 'Pago Deuda'].indexOf(m.tipo) >= 0;
+  const categorizable = ['Gasto', 'Adelanto', 'Pago Deuda'].indexOf(m.tipo) >= 0;
+  const manual = m.origen === 'Manual';
   const dato = (l, v) => '<div class="dato"><span class="mut">' + l + '</span><span>' + esc(v) + '</span></div>';
-  const campos = editable
-    ? '<label class="f">Categoría' + selSub({ clase: 'consumo' }, E.sub) + '<div class="ayuda">Si asignás a una deuda o a un fijo, la categoría puede quedar vacía.</div></label>' +
-      '<label class="f">Asignar a' + selAsig(E.asig) + '<div class="ayuda">Una deuda hace que deje de contarse como gasto.</div></label>' +
+  const campo = (l, ctl, ayuda) => '<label class="f">' + l + ctl + (ayuda ? '<div class="ayuda">' + esc(ayuda) + '</div>' : '') + '</label>';
+  const sel = (k, opciones) => '<select class="in" data-k="' + k + '">' + opciones + '</select>';
+  const cuentaAct = cuentaPorNombre(E.cuenta);
+  const monedaCta = cuentaAct ? cuentaAct.Moneda : m.moneda;
+
+  let campos = campo('Fecha', '<input class="in" type="date" data-k="fecha" value="' + esc(E.fecha) + '">') +
+    campo('Descripción', '<input class="in" data-k="desc" autocomplete="off" value="' + esc(E.desc) + '">') +
+    campo(m.tipo === 'Ajuste' ? 'Monto (positivo suma, negativo resta)' : 'Monto', '<input class="in" data-k="monto" inputmode="decimal" autocomplete="off" value="' + esc(E.monto) + '">', monedaCta === 'USD' ? 'En dólares' : monedaCta === 'UVA' ? 'En UVAs' : 'En pesos');
+  campos += manual
+    ? campo('Cuenta', sel('cuenta', '<option value="">Elegí una cuenta</option>' + cuentasActivas().map(c => op(c.Nombre, E.cuenta, c.Nombre + ' (' + c.Moneda + ')')).join('')))
+    : campo('Cuenta', '<div class="in" style="display:flex;align-items:center;opacity:.7">' + esc(m.cuenta) + '</div>', 'Es el origen del resumen importado y no se cambia.');
+
+  if (m.tipo === 'Transferencia') {
+    const cuentasD = cuentasActivas().filter(c => c.Nombre !== E.cuenta).map(c => op(c.Nombre, E.destino, c.Nombre + ' (' + c.Moneda + ')')).join('');
+    const tarj = S.data.tarjetas.filas.filter(f => f.v.Moneda === monedaCta).map(f => op(f.v.Nombre, E.destino)).join('');
+    campos += campo('Hacia', sel('destino', '<option value="">Elegí el destino</option><optgroup label="Cuentas">' + cuentasD + '</optgroup>' + (tarj ? '<optgroup label="Tarjetas">' + tarj + '</optgroup>' : '')));
+    const dst = cuentaPorNombre(E.destino);
+    if (dst && dst.Moneda !== monedaCta) campos += campo('Monto que llega (' + dst.Moneda + ')', '<input class="in" data-k="montoDest" inputmode="decimal" autocomplete="off" value="' + esc(E.montoDest) + '">');
+  } else if (m.tipo === 'Ingreso') {
+    campos += campo('Tipo de ingreso', sel('sub', '<option value="">Elegí un tipo</option>' + S.data.ingresos.filas.map(f => op(f.v['Tipo de Ingreso'], E.sub)).join('')));
+  } else if (m.tipo === 'Cobro Deuda') {
+    campos += campo('Deuda', sel('asig', S.data.deudas.filas.filter(f => f.v.Tipo === 'Por Cobrar').map(f => op(f.v.Nombre, E.asig)).join('')));
+  } else if (categorizable) {
+    campos += campo('Categoría', selSub({ clase: 'consumo' }, E.sub), 'Si asignás a una deuda o a un fijo, la categoría puede quedar vacía.') +
+      campo('Asignar a', selAsig(E.asig), 'Una deuda hace que deje de contarse como gasto.') +
       '<label class="f recl"><input type="checkbox" data-k="rec" ' + (E.rec ? 'checked' : '') + '> Recordar para próximos resúmenes</label>' +
       '<div id="recbox" class="' + (E.rec ? '' : 'hide') + '"><input class="in" data-k="txt" value="' + esc(E.txt) + '">' +
-      '<label class="f recl"><input type="checkbox" data-k="par" ' + (E.par ? 'checked' : '') + '> Aplicar también a los “Sin categorizar” que contengan ese texto</label></div>'
-    : '<div class="mut" style="margin-top:16px;font-weight:400">Los movimientos de tipo ' + esc(m.tipo) + ' no se recategorizan.</div>';
+      '<label class="f recl"><input type="checkbox" data-k="par" ' + (E.par ? 'checked' : '') + '> Aplicar también a los “Sin categorizar” que contengan ese texto</label></div>';
+  }
+
   $('modal').innerHTML = '<div class="overlay" id="ov"><div class="panel"><header><h2>Movimiento</h2><button class="x" id="cerrar" aria-label="Cerrar">×</button></header>' +
-    '<div class="body" id="body"><div id="err"></div><div class="datos">' + dato('Fecha', fechaCorta(m.fecha)) + dato('Descripción', m.desc) + dato('Monto', fmtMoney(m.monto, m.moneda)) +
-    dato('Cuenta', m.cuenta) + dato('Tipo', m.tipo) + (m.cuota ? dato('Cuota', m.cuota) : '') + dato('Origen', m.origen + (m.afecta === 'No' ? ' · histórico' : '')) + '</div>' + campos + '</div>' +
-    '<footer>' + (editable ? '<button class="btn primary" id="guardarmov">Guardar</button>' : '') + '<button class="btn danger" id="borrarmov">' + (E.borrar ? 'Tocá de nuevo para eliminar' : 'Eliminar') + '</button></footer></div></div>';
+    '<div class="body" id="body"><div id="err"></div><div class="datos">' + dato('Tipo', m.tipo) + (m.cuota ? dato('Cuota', m.cuota) : '') + dato('Origen', m.origen + (m.afecta === 'No' ? ' · histórico' : '')) + '</div>' + campos + '</div>' +
+    '<footer><button class="btn primary" id="guardarmov">Guardar</button><button class="btn danger" id="borrarmov">' + (E.borrar ? 'Tocá de nuevo para eliminar' : 'Eliminar') + '</button></footer></div></div>';
   $('modal').classList.remove('hide');
   $('ov').onclick = e => { if (e.target.id === 'ov') cerrar(); };
   $('cerrar').onclick = cerrar;
   const manejar = e => {
     const k = e.target.dataset.k;
     if (!k) return;
-    if (k === 'sub') E.sub = e.target.value;
-    if (k === 'asig') E.asig = e.target.value;
-    if (k === 'txt') E.txt = e.target.value;
-    if (k === 'par') E.par = e.target.checked;
-    if (k === 'rec') { E.rec = e.target.checked; $('recbox').classList.toggle('hide', !E.rec); }
+    const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+    if (k === 'rec') { E.rec = v; $('recbox').classList.toggle('hide', !E.rec); return; }
+    E[k === 'asig' ? 'asig' : k === 'sub' ? 'sub' : k] = v;
+    if ((k === 'cuenta' || k === 'destino') && e.type === 'change') { E.borrar = false; renderEditMov(); }
   };
   $('body').addEventListener('change', manejar);
   $('body').addEventListener('input', manejar);
-  if ($('guardarmov')) $('guardarmov').onclick = guardarMov;
+  $('guardarmov').onclick = guardarMov;
   $('borrarmov').onclick = borrarMov;
 }
 
 async function guardarMov() {
-  const E = M.edit;
+  const E = M.edit, m = E.m;
   const b = $('guardarmov'); b.disabled = true;
+  const num = s => { const n = numAR(s); return isFinite(n) ? n : s; };
+  const d = { fecha: E.fecha, descripcion: E.desc, monto: num(E.monto) };
+  if (m.origen === 'Manual') d.cuenta = E.cuenta;
+  if (m.tipo === 'Transferencia') { d.destino = E.destino; if (E.montoDest !== '') d.montoDestino = num(E.montoDest); }
+  else if (m.tipo === 'Ingreso') d.subcategoria = E.sub;
+  else if (m.tipo === 'Cobro Deuda') d.asignarA = E.asig;
+  else if (['Gasto', 'Adelanto', 'Pago Deuda'].indexOf(m.tipo) >= 0) Object.assign(d, { subcategoria: E.sub, asignarA: E.asig, recordar: E.rec ? E.txt : '', aplicarParecidos: E.rec && E.par });
   try {
-    const res = await llamar('actualizarMovimiento', E.id, { subcategoria: E.sub, asignarA: E.asig, recordar: E.rec ? E.txt : '', aplicarParecidos: E.rec && E.par });
-    M.movs = res.movimientos; S.data = res.data; S.rev = res.revisiones;
+    const res = await llamar('editarMovimiento', E.id, d);
+    M.movs = res.movimientos; S.data = res.data; S.rev = res.revisiones; D.lista = null; C.recientes = null; R.lista = null; DB.movs = null;
     cerrar(); renderMovs();
     toast(res.actualizados > 1 ? res.actualizados + ' movimientos actualizados' : 'Guardado' + (res.reglasNuevas ? ' · regla nueva' : ''));
   } catch (e) { mostrarError((e && e.message) || 'No se pudo guardar'); b.disabled = false; }
