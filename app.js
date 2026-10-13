@@ -964,8 +964,13 @@ const hoyLocal = () => { const d = new Date(); return d.getFullYear() + '-' + ('
 const cuentasActivas = () => S.data.cuentas.filas.filter(f => f.v.Estado !== 'Inactivo').map(f => f.v);
 const cuentaPorNombre = n => cuentasActivas().filter(c => c.Nombre === n)[0];
 
+function tarjetasActivas() { return (((S.data || {}).tarjetas || {}).filas || []).filter(f => f.v.Estado !== 'Inactivo').map(f => f.v); }
+function esTarjetaNombre(n) { return !!n && tarjetasActivas().some(t => t.Nombre === n); }
+function medioPorNombre(n) { return cuentaPorNombre(n) || tarjetasActivas().filter(t => t.Nombre === n)[0]; }
+
 function reiniciarCarga(conservarCuenta) {
-  const cuenta = (conservarCuenta ? C.v.cuenta : (store.get('cargar_cuenta') || '')) === SIN_CUENTA ? '' : (conservarCuenta ? C.v.cuenta : (store.get('cargar_cuenta') || ''));
+  let cuenta = conservarCuenta ? C.v.cuenta : (store.get('cargar_cuenta') || '');
+  if (cuenta === SIN_CUENTA || (C.tipo !== 'Gasto' && esTarjetaNombre(cuenta))) cuenta = '';
   C.v = { dir: (C.v && C.v.dir) || 'compra', tc: (C.v && C.v.tc) || '', cuenta: cuenta, destino: '', monto: '', montoDest: '', sub: '', tarjeta: '', deuda: '', fecha: hoyLocal(), nota: '' };
   C.error = '';
 }
@@ -979,6 +984,8 @@ function campoC(etiqueta, control, ayuda) {
 }
 
 const numAR = raw => { let t = String(raw == null ? '' : raw).trim().replace(/\s/g, ''); if (t.indexOf(',') >= 0 || /^-?\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '').replace(',', '.'); return t === '' ? NaN : Number(t); };
+const optMedios = actual => optCuentas(actual) + (tarjetasActivas().length
+  ? '<optgroup label="Tarjetas (queda provisorio hasta el resumen)">' + tarjetasActivas().map(t => op(t.Nombre, actual, t.Nombre + ' (' + t.Moneda + ')')).join('') + '</optgroup>' : '');
 const optCuentasMon = (actual, mon) => '<option value="">Elegí una cuenta</option>' +
   cuentasActivas().filter(c => c.Moneda === mon).map(c => op(c.Nombre, actual, c.Nombre)).join('');
 
@@ -999,13 +1006,15 @@ function textoResultadoDolares() {
 function actualizarDolares() { const e = $('dolres'); if (e) e.textContent = textoResultadoDolares(); }
 
 function formularioCarga() {
-  const v = C.v, cta = cuentaPorNombre(v.cuenta), mon = cta ? cta.Moneda : '';
+  const v = C.v, cta = medioPorNombre(v.cuenta), mon = cta ? cta.Moneda : '';
   const sel = (k, opciones) => '<select class="in" data-c="' + k + '">' + opciones + '</select>';
   const txt = (k, ph, modo) => '<input class="in" data-c="' + k + '" inputmode="' + (modo || 'text') + '" autocomplete="off" placeholder="' + esc(ph || '') + '" value="' + esc(v[k]) + '">';
   let c = '';
 
   if (C.tipo === 'Gasto' || C.tipo === 'Ingreso') {
-    c += campoC('Cuenta', sel('cuenta', optCuentas(v.cuenta)), 'Las compras con tarjeta entran con el resumen.');
+    c += C.tipo === 'Gasto'
+      ? campoC('Cuenta o tarjeta', sel('cuenta', optMedios(v.cuenta)), esTarjetaNombre(v.cuenta) ? 'Con la tarjeta queda como provisorio: se reemplaza solo cuando importes el resumen.' : '')
+      : campoC('Cuenta', sel('cuenta', optCuentas(v.cuenta)));
     c += campoC(C.tipo === 'Gasto' ? 'Categoría' : 'Tipo de ingreso', C.tipo === 'Gasto'
       ? selSub({ clase: 'consumo' }, v.sub).replace('data-k="sub"', 'data-c="sub"').replace('(sin categorizar)', 'Elegí una categoría')
       : sel('sub', '<option value="">Elegí un tipo</option>' + S.data.ingresos.filas.map(f => op(f.v['Tipo de Ingreso'], v.sub)).join('')));
@@ -1050,7 +1059,7 @@ function esPorCobrar() {
 
 function filaReciente(m) {
   const signo = m.tipo === 'Gasto' ? '− ' : m.tipo === 'Ingreso' ? '+ ' : (m.tipo === 'Ajuste' ? (m.monto < 0 ? '− ' : '+ ') : '');
-  return '<div class="rec-fila"><div style="min-width:0"><div class="rec-desc">' + esc(m.desc) + '</div><div class="mut small">' + esc(fechaCorta(m.fecha).slice(0, 5)) + ' · ' + esc(m.tipo) + ' · ' + esc(m.cuenta) + (m.destino ? ' → ' + esc(m.destino) : '') + '</div></div>' +
+  return '<div class="rec-fila"><div style="min-width:0"><div class="rec-desc">' + esc(m.desc) + '</div><div class="mut small">' + esc(fechaCorta(m.fecha).slice(0, 5)) + ' · ' + esc(m.tipo) + ' · ' + esc(m.cuenta) + (esProvisorio(m) ? ' · provisorio' : '') + (m.destino ? ' → ' + esc(m.destino) : '') + '</div></div>' +
     '<div class="mono ' + (m.tipo === 'Gasto' ? 'neg' : '') + '" style="white-space:nowrap">' + signo + esc(fmtMoney(Math.abs(m.monto), m.moneda)) + '</div>' +
     '<button class="mini" data-borrar="' + esc(m.id) + '">Borrar</button></div>';
 }
@@ -1074,7 +1083,7 @@ function renderCargar() {
 
 function enlazarCargar() {
   const pg = $('page');
-  pg.querySelectorAll('#tiposc button').forEach(b => b.onclick = () => { C.tipo = b.dataset.t; C.error = ''; C.v.sub = ''; if (C.v.cuenta === SIN_CUENTA) C.v.cuenta = ''; renderCargar(); });
+  pg.querySelectorAll('#tiposc button').forEach(b => b.onclick = () => { C.tipo = b.dataset.t; C.error = ''; C.v.sub = ''; if (C.v.cuenta === SIN_CUENTA || (C.tipo !== 'Gasto' && esTarjetaNombre(C.v.cuenta))) C.v.cuenta = ''; renderCargar(); });
   const refrescar = () => { $('formc').innerHTML = formularioCarga(); enlazarForm(); };
   const enlazarForm = () => {
     document.querySelectorAll('#dirdol button').forEach(b => b.onclick = () => { C.v.dir = b.dataset.dir; C.v.cuenta = ''; C.v.destino = ''; refrescar(); });
