@@ -385,7 +385,7 @@ const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
 const I = {};
 function resetImp() {
   Object.assign(I, { a: null, texto: '', dec: {}, filtro: 'todos', q: '', tarjeta: '', historico: true,
-    importarIgual: false, reemplazar: false, resultado: null, cargando: '', error: '', archivo: null, pideClave: false });
+    importarIgual: false, reemplazar: false, resultado: null, cargando: '', error: '', archivo: null, pideClave: false, modo: 'resumen', items: null, saltados: 0 });
 }
 resetImp();
 
@@ -465,11 +465,11 @@ async function leerArchivo(file, clave) {
 function renderImportar() {
   let cuerpo;
   if (I.cargando) cuerpo = '<div class="aviso mut" style="font-weight:400">' + esc(I.cargando) + '</div>';
-  else if (I.resultado) cuerpo = htmlResultado();
-  else if (I.a) cuerpo = htmlRevision();
-  else cuerpo = htmlInicio();
+  else if (I.resultado) cuerpo = I.modo === 'ciclo' ? htmlResultadoCiclo() : htmlResultado();
+  else if (I.a) cuerpo = I.modo === 'ciclo' ? htmlRevisionCiclo() : htmlRevision();
+  else cuerpo = I.modo === 'ciclo' ? htmlInicioCiclo() : htmlInicio();
   $('page').innerHTML =
-    '<div><button class="mini" id="volverres">← Resúmenes</button><h1 style="margin-top:14px">Importar resumen</h1></div>' +
+    '<div><button class="mini" id="volverres">← Resúmenes</button><h1 style="margin-top:14px">' + (I.modo === 'ciclo' ? 'Movimientos del mes' : 'Importar resumen') + '</h1></div>' +
     (I.error ? '<div class="aviso">' + esc(I.error) + '</div>' : '') + cuerpo;
   enlazarImportar();
 }
@@ -493,6 +493,7 @@ function htmlResultado() {
     '<p class="mut" style="font-weight:400;margin:16px 0 0">Quedaron guardados en la pestaña <b style="color:var(--text)">Movimientos</b> de tu planilla' +
     (r.historico ? ', marcados como histórico (no cambian saldos).' : '.') +
     (r.reemplazados ? ' Se reemplazaron ' + r.reemplazados + ' movimientos que ya estaban importados de este resumen.' : '') +
+    (r.provisoriosBorrados ? ' Se quitaron ' + r.provisoriosBorrados + ' movimientos provisorios del ciclo, que ahora vienen con el resumen oficial.' : '') +
     (r.resumenNuevo ? ' La cabecera del resumen (saldos y lo arrastrado) quedó registrada en la pestaña <b style="color:var(--text)">Resumenes</b>.' : '') + '</p>' +
     '<div style="display:flex;gap:8px;margin-top:20px"><button class="btn primary" id="otro">Importar otro resumen</button>' +
     '<button class="btn" id="verreglas">Ver reglas</button></div></div>';
@@ -609,9 +610,11 @@ async function confirmarImp() {
   const b = $('impconf'); b.dataset.busy = '1'; b.disabled = true; b.textContent = 'Importando…';
   I.error = '';
   try {
-    const res = await llamar('confirmarImportacion', I.texto, I.tarjeta, decisiones, { historico: I.historico, importarIgual: I.importarIgual, reemplazar: I.reemplazar });
+    const res = I.modo === 'ciclo'
+      ? await llamar('confirmarCiclo', I.items, I.tarjeta, decisiones)
+      : await llamar('confirmarImportacion', I.texto, I.tarjeta, decisiones, { historico: I.historico, importarIgual: I.importarIgual, reemplazar: I.reemplazar });
     S.data = res.data; S.rev = res.revisiones; M.movs = null;
-    I.resultado = { importados: res.importados, omitidos: res.omitidos, duplicados: res.duplicados, reglasNuevas: res.reglasNuevas, resumenNuevo: res.resumenNuevo, reemplazados: res.reemplazados, historico: I.historico };
+    I.resultado = { importados: res.importados, omitidos: res.omitidos, duplicados: res.duplicados, reglasNuevas: res.reglasNuevas, resumenNuevo: res.resumenNuevo, reemplazados: res.reemplazados, historico: I.historico, quitados: res.quitados, pagosIgnorados: res.pagosIgnorados, provisoriosBorrados: res.provisoriosBorrados };
   } catch (e) { I.error = (e && e.message) || 'No se pudo importar'; }
   renderImportar();
   if (I.error) window.scrollTo(0, 0);
@@ -627,10 +630,19 @@ function enlazarImportar() {
     ['dragleave', 'drop'].forEach(ev => z.addEventListener(ev, e => { e.preventDefault(); z.classList.remove('over'); }));
     z.addEventListener('drop', e => { if (e.dataTransfer.files[0]) leerArchivo(e.dataTransfer.files[0]); });
   }
+  const x = $('xls');
+  if (x) {
+    x.onchange = () => { if (x.files[0]) leerExcelCiclo(x.files[0]); };
+    const zx = $('dropx');
+    ['dragenter', 'dragover'].forEach(ev => zx.addEventListener(ev, e => { e.preventDefault(); zx.classList.add('over'); }));
+    ['dragleave', 'drop'].forEach(ev => zx.addEventListener(ev, e => { e.preventDefault(); zx.classList.remove('over'); }));
+    zx.addEventListener('drop', e => { if (e.dataTransfer.files[0]) leerExcelCiclo(e.dataTransfer.files[0]); });
+  }
+  if ($('vermes')) $('vermes').onclick = () => irVista('dashboard');
   if ($('abrirclave')) $('abrirclave').onclick = () => leerArchivo(I.archivo, $('clave').value);
   if ($('verreglas')) $('verreglas').onclick = e => { e.preventDefault(); irVista('reglas'); };
   if ($('volverres')) $('volverres').onclick = () => irVista('resumenes');
-  if ($('otro')) $('otro').onclick = () => { resetImp(); renderImportar(); };
+  if ($('otro')) $('otro').onclick = () => { const modo = I.modo; resetImp(); I.modo = modo; renderImportar(); };
   if (!I.a || I.resultado) return;
 
   renderTablaImp(); actualizarContadores();
@@ -638,7 +650,7 @@ function enlazarImportar() {
   const iq = $('iq');
   iq.oninput = () => { I.q = iq.value; renderTablaImp(); };
   if ($('tarjeta')) $('tarjeta').onchange = e => { I.tarjeta = e.target.value; actualizarContadores(); };
-  $('hist').onchange = e => { I.historico = e.target.checked; };
+  if ($('hist')) $('hist').onchange = e => { I.historico = e.target.checked; };
   if ($('igual')) $('igual').onchange = e => { I.importarIgual = e.target.checked; actualizarContadores(); };
   if ($('reemp')) $('reemp').onchange = e => {
     I.reemplazar = e.target.checked;
@@ -750,7 +762,7 @@ function renderMovs() {
     const esGasto = m.tipo === 'Gasto', esIng = m.tipo === 'Ingreso';
     const catTxt = esGasto ? esc(m.subcategoria) : (m.tipo === 'Transferencia' ? esc(m.cuenta) + ' → ' + esc(m.destino) : (m.asignado ? '→ ' + esc(m.asignado) : (m.subcategoria ? esc(m.subcategoria) : '—')));
     return '<tr data-id="' + esc(m.id) + '"><td class="mono mut">' + esc(fechaCorta(m.fecha).slice(0, 5)) + '</td><td class="desc">' + esc(m.desc) +
-      (m.cuota ? ' <span class="tag">cuota ' + esc(m.cuota) + '</span>' : '') + '</td><td><span class="dot" style="background:' + (esGasto ? colorDeCat(grupoCat(m)) : 'var(--border-strong)') + '"></span>' + catTxt +
+      (m.cuota ? ' <span class="tag">cuota ' + esc(m.cuota) + '</span>' : '') + (esProvisorio(m) ? ' <span class="tag">provisorio</span>' : '') + '</td><td><span class="dot" style="background:' + (esGasto ? colorDeCat(grupoCat(m)) : 'var(--border-strong)') + '"></span>' + catTxt +
       '</td><td class="mut cuentacol">' + esc(m.cuenta) + '</td><td class="mut tipocol">' + esc(m.tipo) + '</td><td class="r mono ' + (esGasto ? 'neg' : '') + '">' +
       (esGasto ? '− ' : esIng ? '+ ' : (m.tipo === 'Ajuste' ? (m.monto < 0 ? '− ' : '+ ') : '')) + esc(fmtMoney(Math.abs(m.monto), m.moneda)) + '</td></tr>';
   }).join('');
@@ -1137,10 +1149,17 @@ function renderResumenes() {
   if (R.lista === null) { necesitaDatos(); return; }
   const sel = R.lista.filter(r => r.cierre === R.sel)[0];
   if (sel) { renderDetalleResumen(sel); return; }
-  const boton = '<button class="btn primary" id="impnuevo">Importar resumen</button>';
+  const boton = '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="impciclo">Cargar movimientos del mes</button><button class="btn primary" id="impnuevo">Importar resumen</button></div>';
+  const cp = consumosProvisorios(), provARS = cp.lista.filter(m => m.tipo === 'Gasto' && m.moneda === 'ARS').reduce((t, m) => t + m.monto, 0);
+  const cicloHtml = cp.lista.length
+    ? '<div class="card cuerpo-c" style="max-width:640px"><h2 class="titulo-c">Ciclo en curso (provisorio)</h2>' +
+      '<div class="dfila"><span class="n">Movimientos cargados</span><span class="mono">' + cp.lista.length + '</span></div>' +
+      '<div class="dfila"><span class="n">Gastos en pesos</span><span class="mono">' + esc(fmtMoney(provARS, 'ARS')) + '</span></div>' +
+      '<div class="dfila"><span class="n">Último movimiento</span><span class="mono">' + esc(fechaCorta(cp.ultima)) + '</span></div>' +
+      '<div class="mut small" style="margin-top:10px">Subí de nuevo el Excel cuando quieras actualizarlo. Se reemplaza solo cuando importes el resumen oficial.</div></div>' : '';
   if (!R.lista.length) {
     $('page').innerHTML = '<div class="titulo-fila"><h1>Resúmenes</h1>' + boton + '</div>' +
-      '<div class="card vacio">Todavía no importaste ningún resumen. Apretá <b style="color:var(--text)">Importar resumen</b> para cargar el primero.</div>';
+      cicloHtml + '<div class="card vacio">Todavía no importaste ningún resumen. Apretá <b style="color:var(--text)">Importar resumen</b> para cargar el primero.</div>';
   } else {
     const filas = R.lista.map(r => {
       const n = movsDe(r).length;
@@ -1150,11 +1169,12 @@ function renderResumenes() {
         '<td class="r mono">' + (r.saldoActual.usd ? esc(fmtMoney(r.saldoActual.usd, 'USD')) : '<span class="mut">—</span>') + '</td>' +
         '<td class="r mono">' + esc(fmtMoney(r.pagoMinimo, 'ARS')) + '</td><td class="r mono">' + n + '</td></tr>';
     }).join('');
-    $('page').innerHTML = '<div class="titulo-fila"><h1>Resúmenes</h1>' + boton + '</div>' +
+    $('page').innerHTML = '<div class="titulo-fila"><h1>Resúmenes</h1>' + boton + '</div>' + cicloHtml +
       '<div class="card tablewrap"><table><thead><tr><th>Cierre</th><th>Vence</th><th>Tarjeta</th><th class="r">Saldo ARS</th><th class="r">Saldo USD</th><th class="r">Pago mínimo</th><th class="r">Movimientos</th></tr></thead><tbody>' + filas + '</tbody></table></div>' +
       '<div class="mut" style="font-weight:400;font-size:13px">Tocá un resumen para ver su detalle.</div>';
   }
   $('impnuevo').onclick = () => { resetImp(); irVista('importar'); };
+  $('impciclo').onclick = () => { resetImp(); I.modo = 'ciclo'; irVista('importar'); };
   $('page').querySelectorAll('.fila-res').forEach(tr => tr.onclick = () => { R.sel = tr.dataset.cierre; renderResumenes(); window.scrollTo(0, 0); });
 }
 
@@ -1315,7 +1335,10 @@ function renderDashboard() {
   const avisos = [];
   if (!sal.hayAjuste) avisos.push('Todavía no cargaste los saldos iniciales de tus cuentas: usá Cargar → Ajuste (nota “Saldo inicial”) para que el patrimonio sea real.');
   if (esMes && DB.res[0] && per + '-31' > DB.res[0].cierre) {
-    avisos.push('Los números de ' + nombreMes(per) + ' son provisorios: el último resumen de tarjeta que importaste cierra el ' + fechaCorta(DB.res[0].cierre) + ', así que los consumos con tarjeta posteriores todavía no están. Cuando importes el próximo resumen, los gastos suben y el ahorro baja.');
+    const cp = consumosProvisorios();
+    avisos.push(cp.lista.length
+      ? 'Los números de ' + nombreMes(per) + ' incluyen ' + cp.lista.length + ' movimientos provisorios de la tarjeta (hasta el ' + fechaCorta(cp.ultima) + '). Si hay compras más nuevas, subí otra vez el Excel en Resúmenes. Se reemplazan solos al importar el resumen oficial.'
+      : 'Los números de ' + nombreMes(per) + ' son provisorios: el último resumen de tarjeta que importaste cierra el ' + fechaCorta(DB.res[0].cierre) + ', así que los consumos con tarjeta posteriores todavía no están. Para verlos en vivo, cargá el Excel del banco en Resúmenes → “Cargar movimientos del mes”.');
   }
   if (tj && tj.dias !== null && tj.ars > 0) {
     const cuando = tj.dias < 0 ? 'venció hace ' + (-tj.dias) + ' días' : tj.dias === 0 ? 'vence hoy' : 'vence en ' + tj.dias + ' días';
@@ -1546,7 +1569,9 @@ function armarFlujo() {
     while (prox < hoy) prox = masMeses(prox, 1);
     const listaTarjeta = fijosActivos().filter(v => v.Movimiento === 'Gasto' && fijoEsDeTarjeta(v));
     const fijosTarjeta = listaTarjeta.reduce((t, v) => t + fijoEnPesos(v), 0);
-    if (PREFS.consumoCiclo > 0) poner(prox, 'Tarjeta: lo que ya gastaste este ciclo', -PREFS.consumoCiclo, 'tarjeta');
+    const cp = consumosProvisorios();
+    const consumo = Math.round((cp.total + (PREFS.consumoCiclo || 0)) * 100) / 100;
+    if (consumo > 0) poner(prox, 'Tarjeta: lo que ya gastaste este ciclo' + (cp.libres.length ? ' (' + cp.libres.length + ' compras cargadas' + (PREFS.consumoCiclo > 0 ? ' + lo que sumaste' : '') + ')' : ''), -consumo, 'tarjeta');
     if (cf.prox.ARS > 0) poner(prox, 'Tarjeta: cuotas del próximo resumen', -cf.prox.ARS, 'tarjeta');
     if (fijosTarjeta > 0) poner(prox, 'Tarjeta: ' + listaTarjeta.length + ' fijos del mes (seguro, suscripciones, cuota del club…)', -Math.round(fijosTarjeta * 100) / 100, 'tarjeta');
   }
@@ -1620,8 +1645,8 @@ function renderFlujo() {
   const fila = (a, b, cls) => '<div class="dfila ' + (cls || '') + '"><span class="n">' + a + '</span><span class="mono">' + b + '</span></div>';
 
   const datos = card('Tus datos', '<div class="dgrid" style="gap:0 16px"><label class="f">¿Cuándo cobrás?<input class="in" type="date" id="fcobro" value="' + esc(PREFS.proximoCobro) + '"></label>' +
-    '<label class="f">Lo que ya gastaste con la tarjeta este ciclo<input class="in" id="fconsumo" inputmode="decimal" autocomplete="off" placeholder="0" value="' + (PREFS.consumoCiclo ? esc(String(PREFS.consumoCiclo).replace('.', ',')) : '') + '">' +
-    '<div class="ayuda">Mirálo en el homebanking, sin contar las cuotas ni tus fijos de la tarjeta (seguro, suscripciones…): esos los sumo yo. Es para estimar el próximo resumen.</div></label></div>');
+    '<label class="f">' + (consumosProvisorios().libres.length ? 'Otros consumos de la tarjeta que no estén en el Excel (opcional)' : 'Lo que ya gastaste con la tarjeta este ciclo') + '<input class="in" id="fconsumo" inputmode="decimal" autocomplete="off" placeholder="0" value="' + (PREFS.consumoCiclo ? esc(String(PREFS.consumoCiclo).replace('.', ',')) : '') + '">' +
+    '<div class="ayuda">' + (consumosProvisorios().libres.length ? 'Ya tengo ' + consumosProvisorios().libres.length + ' compras cargadas del Excel (' + esc(fmtMoney(consumosProvisorios().total, 'ARS')) + ', hasta el ' + esc(fechaCorta(consumosProvisorios().ultima)) + '), sin fijos ni cuotas. Acá sumá solo lo que falte.' : 'Mirálo en el homebanking, sin contar las cuotas ni tus fijos de la tarjeta (seguro, suscripciones…): esos los sumo yo. O cargá el Excel del banco en Resúmenes y se calcula solo.') + '</div></label></div>');
 
   let hasta;
   if (!F.hasta) {
@@ -1720,6 +1745,127 @@ function enlazarTC() {
   const m = $('tcmanual'), a = $('tcauto');
   if (m) m.onchange = () => { const n = numAR(m.value); guardarPref({ tcManual: isFinite(n) && n > 0 ? n : 0 }); };
   if (a) a.onclick = () => guardarPref({ tcManual: 0 });
+}
+
+// ---------- Movimientos del mes (Excel "Últimos movimientos" del banco) ----------
+const XLSX_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.core.min.js';
+const XLSX_SRI = 'sha512-UhlYw//T419BPq/emC5xSZzkjjreRfN3426517rfsg/XIEC02ggQBb680V0VvP+zaDZ78zqse3rqnnI5EJ6rxA==';
+const esProvisorio = m => String(m.origen || '').indexOf('Ciclo tarjeta') === 0;
+
+function cargarXlsx() {
+  if (window.XLSX) return Promise.resolve();
+  return new Promise((ok, no) => {
+    const s = document.createElement('script');
+    s.src = XLSX_URL; s.integrity = XLSX_SRI; s.crossOrigin = 'anonymous';
+    s.onload = ok;
+    s.onerror = () => no(new Error('No se pudo cargar el lector de Excel. ¿Tenés internet?'));
+    document.head.appendChild(s);
+  });
+}
+
+function fechaDeBanco(v) {
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/.exec(String(v == null ? '' : v).trim());
+  if (!m) return '';
+  const anio = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]), mes = Number(m[2]), dia = Number(m[1]);
+  const d = new Date(anio, mes - 1, dia);
+  if (d.getFullYear() !== anio || d.getMonth() !== mes - 1 || d.getDate() !== dia) return '';
+  return anio + '-' + ('0' + mes).slice(-2) + '-' + ('0' + dia).slice(-2);
+}
+
+function montoDeBanco(v) {
+  const texto = String(v == null ? '' : v);
+  let n = texto.replace(/[^0-9,.\-]/g, '');
+  if (n.indexOf(',') >= 0) n = n.replace(/\./g, '').replace(',', '.');
+  else if (/^-?\d{1,3}(\.\d{3})+$/.test(n)) n = n.replace(/\./g, '');
+  const monto = Number(n);
+  return n && isFinite(monto) && monto !== 0 ? { monto: monto, moneda: /usd|u\$s/i.test(texto) ? 'USD' : 'ARS' } : null;
+}
+
+function cuotaDeBanco(v) {
+  const m = /^(\d{1,2})\/(\d{1,2})$/.exec(String(v == null ? '' : v).trim());
+  return m ? Number(m[1]) + '/' + Number(m[2]) : '';
+}
+
+/** Convierte la hoja del banco en renglones { fecha, desc, cuota, monto (con signo), moneda }. */
+function itemsDeExcel(buffer) {
+  const wb = XLSX.read(buffer, { type: 'array' });
+  const filas = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: '' });
+  const norm = x => String(x == null ? '' : x).trim().toLowerCase();
+  const h = filas.findIndex(f => f.some(c => norm(c).indexOf('fecha') === 0) && f.some(c => norm(c).indexOf('monto') === 0));
+  if (h < 0) throw new Error('No encontré las columnas Fecha y Monto. ¿Es el Excel de “Últimos movimientos” de la tarjeta?');
+  const col = nombre => filas[h].findIndex(c => norm(c).indexOf(nombre) === 0);
+  const cf = col('fecha'), cd = col('movimiento'), cc = col('cuota'), cm = col('monto');
+  if (cd < 0) throw new Error('No encontré la columna de movimientos en el Excel.');
+  const items = []; let saltados = 0;
+  filas.slice(h + 1).forEach(f => {
+    const fecha = fechaDeBanco(f[cf]), desc = String(f[cd] == null ? '' : f[cd]).replace(/\s+/g, ' ').trim(), m = montoDeBanco(f[cm]);
+    if (!fecha || !desc || !m) { if (desc || String(f[cm] || '').trim()) saltados++; return; }
+    items.push({ fecha: fecha, desc: desc, cuota: cc >= 0 ? cuotaDeBanco(f[cc]) : '', monto: m.monto, moneda: m.moneda });
+  });
+  return { items: items, saltados: saltados };
+}
+
+async function leerExcelCiclo(file) {
+  I.error = ''; I.a = null; I.resultado = null; I.modo = 'ciclo';
+  I.cargando = 'Leyendo el Excel…'; renderImportar();
+  try {
+    await cargarXlsx();
+    const r = itemsDeExcel(await file.arrayBuffer());
+    I.items = r.items; I.saltados = r.saltados;
+    I.cargando = 'Analizando los movimientos…'; renderImportar();
+    I.a = await llamar('analizarCiclo', I.items, '');
+    I.a.resumen = { controles: { ok: true } };
+    prepararDecisiones();
+  } catch (e) { I.error = (e && e.message) || String(e); }
+  I.cargando = ''; renderImportar();
+}
+
+function htmlInicioCiclo() {
+  return '<label class="drop" id="dropx"><input type="file" id="xls" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">' +
+    '<b>Elegí el Excel de “Últimos movimientos” del banco</b><span class="mut" style="font-weight:400">o arrastralo hasta acá</span></label>' +
+    '<div class="mut" style="font-weight:400;font-size:13px;max-width:680px;line-height:1.5">En el homebanking: tarjeta → Últimos movimientos → descargar en Excel. ' +
+    'Estos movimientos son <b style="color:var(--text)">provisorios</b>: te dejan ver en vivo cuánto vas gastando, <b style="color:var(--text)">no cambian tus saldos</b> y se reemplazan solos cuando importás el resumen oficial. ' +
+    'Los pagos y créditos del banco no se importan. Podés subir el Excel cuantas veces quieras: solo se agrega lo nuevo y se quita lo que el banco anuló.</div>';
+}
+
+function htmlRevisionCiclo() {
+  const a = I.a, c = a.ciclo, nuevas = a.filas.filter(f => !f.dup);
+  const suma = (l, mon) => l.filter(f => f.moneda === mon).reduce((s, f) => s + f.monto, 0);
+  const kpis = [
+    ['Compras nuevas', String(nuevas.length), (a.filas.length - nuevas.length) + ' ya estaban cargadas'],
+    ['Total nuevo', fmtMoney(suma(nuevas, 'ARS'), 'ARS'), suma(nuevas, 'USD') ? fmtMoney(suma(nuevas, 'USD'), 'USD') + ' en dólares' : 'en pesos'],
+    ['Ciclo', c.base ? 'desde el ' + fechaCorta(c.base) : 'sin resumen previo', c.proximoCierre ? 'cierra el ' + fechaCorta(c.proximoCierre) : 'según el último resumen'],
+    ['Se ignoran', String(a.pagos.length), 'pagos y créditos del banco'],
+  ].map(k => '<div class="card kpi"><span class="l">' + k[0] + '</span><span class="v">' + esc(k[1]) + '</span><span class="s">' + esc(k[2]) + '</span></div>').join('');
+  const quitar = a.quitar.length
+    ? '<div class="aviso">Ya no figuran en el Excel y se van a quitar (' + a.quitar.length + '): ' + a.quitar.map(x => esc(x.desc) + ' · ' + esc(fmtMoney(x.monto, x.moneda))).join(' · ') + '</div>' : '';
+  const saltados = I.saltados ? '<div class="mut" style="font-weight:400;font-size:13px">No pude leer ' + I.saltados + ' renglones del Excel y los salteé.</div>' : '';
+  return '<div class="kpis">' + kpis + '</div>' + quitar + htmlOmitidas() + saltados +
+    '<div class="toolbar"><button class="pill ' + (I.filtro === 'todos' ? 'on' : '') + '" data-f="todos">Todos <small>' + a.filas.length + '</small></button>' +
+    '<button class="pill ' + (I.filtro === 'sin' ? 'on' : '') + '" data-f="sin" id="chip-sin">Sin categorizar</button>' +
+    '<button class="pill ' + (I.filtro === 'dup' ? 'on' : '') + '" data-f="dup">Ya cargados <small>' + a.filas.filter(f => f.dup).length + '</small></button>' +
+    '<div class="search" style="margin-left:8px"><span class="lupa"></span><input id="iq" placeholder="Buscar…" value="' + esc(I.q) + '"></div></div>' +
+    '<div class="card tablewrap" id="imptabla"></div>' +
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn primary" id="impconf">Cargar</button>' +
+    '<button class="btn" id="otro">Cancelar</button><a href="#" id="verreglas" class="mut" style="margin-left:auto;color:var(--muted)">Ver reglas</a></div>';
+}
+
+function htmlResultadoCiclo() {
+  const r = I.resultado;
+  return '<div class="card" style="padding:24px"><h2 style="margin:0 0 12px;font-size:20px;letter-spacing:-.02em">Listo, movimientos del mes cargados</h2><div class="kpis">' +
+    [['Cargados', r.importados], ['Ya estaban', r.duplicados], ['Quitados', r.quitados], ['Pagos ignorados', r.pagosIgnorados]].map(k =>
+      '<div class="card kpi"><span class="l">' + k[0] + '</span><span class="v">' + k[1] + '</span></div>').join('') + '</div>' +
+    '<p class="mut" style="font-weight:400;margin:16px 0 0">Quedaron como movimientos <b style="color:var(--text)">provisorios</b> de la tarjeta: ya suman en el Dashboard y en el Flujo, y no tocan tus saldos. ' +
+    'Cuando importes el resumen oficial se reemplazan solos.' + (r.reglasNuevas ? ' Se guardaron ' + r.reglasNuevas + ' reglas nuevas.' : '') + '</p>' +
+    '<div style="display:flex;gap:8px;margin-top:20px;flex-wrap:wrap"><button class="btn primary" id="vermes">Ver el Dashboard</button><button class="btn" id="otro">Subir otro Excel</button><button class="btn" id="verreglas">Ver reglas</button></div></div>';
+}
+
+/** Lo ya cargado como provisorio de la tarjeta (lo que se está gastando en el ciclo). */
+function consumosProvisorios() {
+  const lista = (DB.movs || R.movs || []).filter(esProvisorio);
+  const libres = lista.filter(m => m.tipo === 'Gasto' && !m.asignado && !m.cuota);
+  const total = libres.reduce((t, m) => t + m.monto * (m.moneda === 'USD' ? tcEfectivo() : 1), 0);
+  return { lista, libres, total: Math.round(total * 100) / 100, ultima: lista.filter(m => !m.cuota).map(m => m.fecha).sort().pop() || '' };
 }
 
 // ---------- inicio ----------
