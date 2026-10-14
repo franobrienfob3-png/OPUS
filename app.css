@@ -289,3 +289,10 @@ label.recl { display:flex; gap:8px; align-items:center; color:var(--text-2); cur
 .tl.rojo .sal { color:var(--danger); }
 .tlini { color:var(--muted); }
 @media (max-width:720px) { .tl { grid-template-columns:42px minmax(0,1fr) auto; } .tl .sal { grid-column:2 / 4; text-align:left; font-size:12px; color:var(--muted); } .tl.cab .sal { display:none; } .gran { font-size:32px; } }
+
+/* Deslizar entre solapas */
+@keyframes deslizaIzq { from { opacity:0; transform:translateX(28px); } to { opacity:1; transform:none; } }
+@keyframes deslizaDer { from { opacity:0; transform:translateX(-28px); } to { opacity:1; transform:none; } }
+#page.desliza-izq { animation:deslizaIzq .22s ease-out; }
+#page.desliza-der { animation:deslizaDer .22s ease-out; }
+@media (prefers-reduced-motion: reduce) { #page.desliza-izq, #page.desliza-der { animation:none; } }

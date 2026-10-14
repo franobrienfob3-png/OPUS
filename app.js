@@ -153,6 +153,8 @@ function renderTabs() {
   $('tabs').innerHTML = [['dashboard', 'Dashboard'], ['flujo', 'Flujo'], ['cargar', 'Cargar'], ['movs', 'Movimientos'], ['deudas', 'Deudas'], ['resumenes', 'Resúmenes'], ['maestros', 'DDMM']].map(t =>
     '<button class="tab ' + (activa === t[0] ? 'on' : '') + '" data-v="' + t[0] + '">' + t[1] + '</button>').join('');
   $('tabs').querySelectorAll('.tab').forEach(b => b.onclick = () => irVista(b.dataset.v));
+  const activa_ = $('tabs').querySelector('.tab.on');
+  if (activa_ && activa_.scrollIntoView) activa_.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
 }
 
 function irVista(v) {
@@ -1896,6 +1898,55 @@ function consumosProvisorios() {
   const total = libres.reduce((t, m) => t + m.monto * (m.moneda === 'USD' ? tcEfectivo() : 1), 0);
   return { lista, libres, total: Math.round(total * 100) / 100, ultima: lista.filter(m => !m.cuota).map(m => m.fecha).sort().pop() || '' };
 }
+
+// ---------- Pasar de solapa deslizando el dedo ----------
+const ORDEN_SOLAPAS = ['dashboard', 'flujo', 'cargar', 'movs', 'deudas', 'resumenes', 'maestros'];
+
+(function () {
+  let ini = null;
+  // zonas donde deslizar ya significa otra cosa: tablas y filtros que se mueven de costado, campos de texto, paneles
+  const ZONAS = 'input, select, textarea, .tablewrap, .seg, .tabs, .pills, .toolbar, #modal, #login, .drop, .evol, [contenteditable]';
+  const scrollHorizontal = el => {
+    for (let n = el; n && n !== document.body; n = n.parentElement) {
+      if (n.scrollWidth > n.clientWidth + 2 && /(auto|scroll)/.test(getComputedStyle(n).overflowX)) return true;
+    }
+    return false;
+  };
+  const puedeDeslizar = () => {
+    const modal = $('modal');
+    if (modal && !modal.classList.contains('hide')) return false;
+    if (ORDEN_SOLAPAS.indexOf(S.vista) < 0) return false;                                  // importando un resumen o viendo reglas: no
+    if (S.vista === 'cargar' && C.v && (C.v.monto || C.v.nota || C.v.montoDest)) return false;   // hay algo escrito sin guardar
+    return true;
+  };
+
+  document.addEventListener('touchstart', e => {
+    ini = null;
+    if (e.touches.length !== 1 || !puedeDeslizar()) return;
+    const t = e.target.nodeType === 1 ? e.target : e.target.parentElement;
+    if (!t || t.closest(ZONAS) || scrollHorizontal(t)) return;
+    // iPhone: desde el borde de la pantalla el sistema usa el gesto de "volver atrás"; ahí no se compite con él
+    const x0 = e.touches[0].clientX;
+    if (x0 < 28 || x0 > window.innerWidth - 28) return;
+    ini = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+  }, { passive: true });
+
+  document.addEventListener('touchend', e => {
+    if (!ini) return;
+    const p = ini; ini = null;
+    const c = e.changedTouches[0], dx = c.clientX - p.x, dy = c.clientY - p.y;
+    if (Math.abs(dx) < 70 || Math.abs(dy) > Math.abs(dx) * 0.6 || Date.now() - p.t > 700) return;
+    if (String(window.getSelection && window.getSelection()) !== '') return;
+    const i = ORDEN_SOLAPAS.indexOf(S.vista), j = i + (dx < 0 ? 1 : -1);
+    if (i < 0 || j < 0 || j >= ORDEN_SOLAPAS.length || !puedeDeslizar()) return;
+    irVista(ORDEN_SOLAPAS[j]);
+    const pg = $('page');
+    pg.classList.remove('desliza-izq', 'desliza-der');
+    void pg.offsetWidth;
+    pg.classList.add(dx < 0 ? 'desliza-izq' : 'desliza-der');
+    window.scrollTo(0, 0);
+  }, { passive: true });
+})();
 
 // ---------- inicio ----------
 traerTodo().catch(() => { /* si falla, cada solapa lo vuelve a pedir */ });
