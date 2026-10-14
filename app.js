@@ -785,7 +785,7 @@ function renderMovs() {
       cuentasBase.map(c => chip(M.cuentas.indexOf(c) >= 0, 'data-cta="' + esc(c) + '"', c)).join('') +
       tiposBase.map(t => chip(M.tipo === t, 'data-tipo="' + esc(t) + '"', t)).join('') +
       (M.cat ? '<button class="pill rojo" id="quitacat">' + esc(M.cat) + ' ×</button>' : '') +
-      '<span class="count">' + filas.length + ' de ' + base.length + ' movimientos</span></div>' +
+      '<span class="count">' + filas.length + ' de ' + base.length + ' movimientos</span><button class="mini" id="exportar" title="Descarga todos tus movimientos en un archivo CSV">Descargar CSV</button></div>' +
     '<div class="card tablewrap">' + tabla + '</div>';
 
   const pg = $('page');
@@ -796,10 +796,30 @@ function renderMovs() {
   pg.querySelectorAll('[data-ord]').forEach(h => h.onclick = () => { if (M.campo === h.dataset.ord) M.desc = !M.desc; else { M.campo = h.dataset.ord; M.desc = true; } renderMovs(); });
   if ($('quitacat')) $('quitacat').onclick = () => { M.cat = ''; renderMovs(); };
   if ($('mas')) $('mas').onclick = () => { M.limite += 200; renderMovs(); };
+  if ($('exportar')) $('exportar').onclick = descargarMovimientos;
   if ($('limpiar')) $('limpiar').onclick = () => { M.q = ''; M.cuentas = []; M.tipo = ''; M.cat = ''; renderMovs(); };
   pg.querySelectorAll('tbody tr').forEach(tr => tr.onclick = () => abrirMov(tr.dataset.id));
   const mq = $('mq');
   mq.oninput = () => { M.q = mq.value; const p = mq.selectionStart; renderMovs(); const n = $('mq'); n.focus(); n.setSelectionRange(p, p); };
+}
+
+// ----- descargar todos los movimientos (para revisarlos en otra planilla o con ayuda) -----
+function csvMovimientos(lista) {
+  const celda = v => { const t = String(v == null ? '' : v); return /[",\n;]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+  const cols = [['Fecha', m => m.fecha], ['Tipo', m => m.tipo], ['Descripcion', m => m.desc], ['Monto', m => m.monto], ['Moneda', m => m.moneda],
+    ['Cuenta', m => m.cuenta], ['Cuenta Destino', m => m.destino], ['Monto Destino', m => m.montoDestino], ['Subcategoria', m => m.subcategoria],
+    ['Asignado A', m => m.asignado], ['Cuota', m => m.cuota], ['Origen', m => m.origen], ['Afecta Saldo', m => m.afecta], ['ID', m => m.id]];
+  return cols.map(c => c[0]).join(',') + '\n' + lista.slice().sort((a, b) => a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0)
+    .map(m => cols.map(c => celda(c[1](m))).join(',')).join('\n');
+}
+
+function descargarMovimientos() {
+  const blob = new Blob(['\ufeff' + csvMovimientos(M.movs)], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'movimientos-opus-' + hoyLocal() + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast('Descargado: ' + M.movs.length + ' movimientos');
 }
 
 // ----- editar un movimiento -----
