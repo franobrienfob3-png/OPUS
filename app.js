@@ -11,6 +11,14 @@ const CFG = window.OPUS_CONFIG || {};
 let TOKEN = '';
 try { TOKEN = localStorage.getItem('opus_token') || sessionStorage.getItem('opus_token') || ''; } catch (e) { /* sin almacenamiento */ }
 
+// Sesión propia de 30 días que entrega el servidor después de entrar con Google (el pase de Google dura solo 1 hora).
+let SESION = '';
+try { SESION = localStorage.getItem('opus_sesion') || ''; } catch (e) { /* sin almacenamiento */ }
+function guardarSesion(v) {
+  SESION = v || '';
+  try { if (SESION) localStorage.setItem('opus_sesion', SESION); else localStorage.removeItem('opus_sesion'); } catch (e) { /* sin almacenamiento */ }
+}
+
 function tokenVigente(t) {
   try {
     const p = JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
@@ -72,6 +80,7 @@ async function mostrarLogin() {
 
 function salir() {
   guardarToken('');
+  guardarSesion('');
   try { if (window.google && google.accounts) google.accounts.id.disableAutoSelect(); } catch (e) { /* nada */ }
   location.reload();
 }
@@ -82,23 +91,39 @@ async function enviar(fn, args) {
     resp = await fetch(CFG.apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ token: TOKEN, fn: fn, args: args }),
+      body: JSON.stringify(SESION ? { sesion: SESION, fn: fn, args: args } : { token: TOKEN, fn: fn, args: args }),
     });
   } catch (e) { throw new Error('No se pudo conectar con el servidor. Revisá tu conexión.'); }
   let j;
   try { j = await resp.json(); } catch (e) { throw new Error('El servidor respondió algo inesperado. Probá de nuevo en un momento.'); }
   if (j.code === 'AUTH') { const err = new Error(j.error); err.auth = true; throw err; }
   if (j.error) throw new Error(j.error);
+  if (j.sesion) guardarSesion(j.sesion);   // el servidor renueva la sesión solo cuando le queda poco
   return j.result;
 }
 
+let abriendoSesion = null;
+/** Cambia el pase de Google (1 hora) por la sesión propia (30 días). Si no se puede, se sigue con el pase. */
+function abrirSesion() {
+  if (SESION) return Promise.resolve();
+  if (!abriendoSesion) {
+    abriendoSesion = enviar('crearSesion', [])
+      .then(r => { if (r && r.sesion) guardarSesion(r.sesion); })
+      .catch(() => { /* sin sesión propia: sigue funcionando con el pase de Google */ })
+      .then(() => { abriendoSesion = null; });
+  }
+  return abriendoSesion;
+}
+
 async function llamarCore(fn, args) {
-  if (!tokenVigente(TOKEN)) await pedirLogin();
+  if (!SESION && !tokenVigente(TOKEN)) await pedirLogin();
+  await abrirSesion();
   try { return await enviar(fn, args); }
   catch (e) {
     if (!e.auth) throw e;
-    guardarToken('');
+    guardarSesion(''); guardarToken('');
     await pedirLogin();
+    await abrirSesion();
     return await enviar(fn, args);
   }
 }
@@ -239,6 +264,14 @@ function renderPage() {
   const cs = document.createElement('button');
   cs.className = 'btn'; cs.style.marginTop = '24px'; cs.textContent = 'Cerrar sesión'; cs.onclick = salir;
   $('page').appendChild(cs);
+  const ct = document.createElement('button');
+  ct.className = 'btn'; ct.style.margin = '24px 0 0 8px'; ct.textContent = 'Cerrar sesión en todos los dispositivos';
+  ct.onclick = async () => {
+    if (!confirm('Esto cierra tu sesión en el celular, la compu y cualquier otro dispositivo. ¿Seguro?')) return;
+    try { await llamar('cerrarSesiones'); } catch (e) { /* igual se cierra acá */ }
+    salir();
+  };
+  $('page').appendChild(ct);
 }
 
 function avisosHtml() {
