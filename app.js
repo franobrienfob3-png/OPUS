@@ -730,7 +730,7 @@ function enlazarImportar() {
 // ---------- Movimientos ----------
 const MESES_CORTO = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 const COLORES_CAT = ['#F2EFEB', '#C62F2B', '#E5574F', '#8C2A25', '#8A847E', '#5E5955', '#3A3634'];
-const M = { movs: null, periodo: '', q: '', cuentas: [], tipo: '', cat: '', campo: 'fecha', desc: true, limite: 120, edit: null };
+const M = { movs: null, periodo: '', q: '', cuentas: [], tipos: [], dd: '', cat: '', campo: 'fecha', desc: true, limite: 120, edit: null };
 
 const nombreMes = ym => MESES_CORTO[Number(ym.slice(5, 7)) - 1] + ' ' + ym.slice(0, 4);
 const mesesDe = lista => Array.from(new Set(lista.map(m => m.fecha.slice(0, 7)))).sort().reverse();
@@ -792,7 +792,7 @@ function renderMovs() {
   // filtros de la tabla
   const q = M.q.trim().toLowerCase();
   const filas = base.filter(m =>
-    (!M.cuentas.length || M.cuentas.indexOf(m.cuenta) >= 0) && (!M.tipo || m.tipo === M.tipo) &&
+    (!M.cuentas.length || M.cuentas.indexOf(m.cuenta) >= 0) && (!M.tipos.length || M.tipos.indexOf(m.tipo) >= 0) &&
     (!M.cat || (m.tipo === 'Gasto' && grupoCat(m) === M.cat)) &&
     (!q || (m.desc + ' ' + m.subcategoria + ' ' + m.cuenta + ' ' + m.asignado).toLowerCase().indexOf(q) >= 0));
   const sentido = d => (M.desc ? -1 : 1) * d;
@@ -835,8 +835,7 @@ function renderMovs() {
     '<div class="card donutbox"><div class="donut" style="background:' + donut + '"><div class="hole"><span class="mut" style="font-size:12px;font-weight:400">' + esc(sel ? sel.n : 'Gastos') +
       '</span><span class="mono" style="font-size:16px;font-weight:600">' + esc(fmtMoney(sel ? sel.total : totARS, 'ARS')) + '</span></div></div><div class="legend">' + leyenda + '</div></div>' +
     '<div class="toolbar"><div class="search"><span class="lupa"></span><input id="mq" placeholder="Buscar…" value="' + esc(M.q) + '"></div>' +
-      cuentasBase.map(c => chip(M.cuentas.indexOf(c) >= 0, 'data-cta="' + esc(c) + '"', c)).join('') +
-      tiposBase.map(t => chip(M.tipo === t, 'data-tipo="' + esc(t) + '"', t)).join('') +
+      ddMov('cuentas', 'Cuentas', cuentasBase, M.cuentas) + ddMov('tipos', 'Tipos', tiposBase, M.tipos) +
       (M.cat ? '<button class="pill rojo" id="quitacat">' + esc(M.cat) + ' ×</button>' : '') +
       '<span class="count">' + filas.length + ' de ' + base.length + ' movimientos</span><button class="mini" id="exportar" title="Descarga todos tus movimientos en un archivo CSV">Descargar CSV</button></div>' +
     '<div class="card tablewrap">' + tabla + '</div>';
@@ -844,17 +843,37 @@ function renderMovs() {
   const pg = $('page');
   pg.querySelectorAll('[data-per]').forEach(b => b.onclick = () => { M.periodo = b.dataset.per; M.cat = ''; M.limite = 120; renderMovs(); });
   pg.querySelectorAll('.leg').forEach(l => l.onclick = () => { M.cat = M.cat === l.dataset.cat ? '' : l.dataset.cat; M.limite = 120; renderMovs(); });
-  pg.querySelectorAll('[data-cta]').forEach(b => b.onclick = () => { const c = b.dataset.cta, i = M.cuentas.indexOf(c); if (i >= 0) M.cuentas.splice(i, 1); else M.cuentas.push(c); renderMovs(); });
-  pg.querySelectorAll('[data-tipo]').forEach(b => b.onclick = () => { M.tipo = M.tipo === b.dataset.tipo ? '' : b.dataset.tipo; renderMovs(); });
+  pg.querySelectorAll('[data-dd]').forEach(b => b.onclick = () => { M.dd = M.dd === b.dataset.dd ? '' : b.dataset.dd; renderMovs(); });
+  pg.querySelectorAll('[data-ddop]').forEach(i => i.onchange = () => {
+    const lista = i.dataset.ddop === 'cuentas' ? M.cuentas : M.tipos, k = lista.indexOf(i.value);
+    if (i.checked && k < 0) lista.push(i.value); else if (!i.checked && k >= 0) lista.splice(k, 1);
+    M.limite = 120; renderMovs();
+  });
+  pg.querySelectorAll('[data-ddlimpiar]').forEach(b => b.onclick = () => { if (b.dataset.ddlimpiar === 'cuentas') M.cuentas = []; else M.tipos = []; renderMovs(); });
   pg.querySelectorAll('[data-ord]').forEach(h => h.onclick = () => { if (M.campo === h.dataset.ord) M.desc = !M.desc; else { M.campo = h.dataset.ord; M.desc = true; } renderMovs(); });
   if ($('quitacat')) $('quitacat').onclick = () => { M.cat = ''; renderMovs(); };
   if ($('mas')) $('mas').onclick = () => { M.limite += 200; renderMovs(); };
   if ($('exportar')) $('exportar').onclick = descargarMovimientos;
-  if ($('limpiar')) $('limpiar').onclick = () => { M.q = ''; M.cuentas = []; M.tipo = ''; M.cat = ''; renderMovs(); };
+  if ($('limpiar')) $('limpiar').onclick = () => { M.q = ''; M.cuentas = []; M.tipos = []; M.dd = ''; M.cat = ''; renderMovs(); };
   pg.querySelectorAll('tbody tr').forEach(tr => tr.onclick = () => abrirMov(tr.dataset.id));
   const mq = $('mq');
   mq.oninput = () => { M.q = mq.value; const p = mq.selectionStart; renderMovs(); const n = $('mq'); n.focus(); n.setSelectionRange(p, p); };
 }
+
+// ----- filtros desplegables de Movimientos (cuentas y tipos, se pueden elegir varias) -----
+function ddMov(id, titulo, opciones, elegidas) {
+  const abierto = M.dd === id;
+  return '<div class="dd"><button type="button" class="pill dd-btn ' + (elegidas.length ? 'on' : '') + '" data-dd="' + id + '" aria-expanded="' + abierto + '">' + esc(titulo) +
+    (elegidas.length ? ' <small>' + elegidas.length + '</small>' : '') + ' <span class="dd-flecha">▾</span></button>' +
+    (abierto ? '<div class="dd-panel">' + opciones.map(o => '<label class="dd-op"><input type="checkbox" data-ddop="' + id + '" value="' + esc(o) + '"' + (elegidas.indexOf(o) >= 0 ? ' checked' : '') + '> ' + esc(o) + '</label>').join('') +
+      (elegidas.length ? '<button type="button" class="mini dd-limpiar" data-ddlimpiar="' + id + '">Quitar selección</button>' : '') + '</div>' : '') + '</div>';
+}
+document.addEventListener('click', e => {
+  if (M.dd && !e.target.closest('.dd')) { M.dd = ''; if (S.vista === 'movs' && M.movs) renderMovs(); }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && M.dd) { M.dd = ''; if (S.vista === 'movs' && M.movs) renderMovs(); }
+});
 
 // ----- descargar todos los movimientos (para revisarlos en otra planilla o con ayuda) -----
 function csvMovimientos(lista) {
