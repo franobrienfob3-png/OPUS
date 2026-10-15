@@ -305,8 +305,8 @@ label.f > .in { max-width:100%; }
 @media (prefers-reduced-motion: reduce) { #page.desliza-izq, #page.desliza-der { animation:none; } }
 
 /* Tipo de cambio y selector de moneda en el encabezado */
-.tcbox { margin-left:auto; display:flex; flex-direction:column; align-items:flex-end; gap:5px; }
-.tcbox .tc { font-size:13px; font-weight:500; color:var(--text-2); white-space:nowrap; }
+.tcbox { margin-left:auto; display:flex; flex-direction:column; align-items:center; gap:5px; }
+.tcbox .tc { font-size:13px; font-weight:700; color:var(--text-2); white-space:nowrap; text-align:center; }
 .mini-seg { padding:2px; gap:2px; }
 .mini-seg button { padding:2px 12px; font-size:12px; }
 @media (max-width:720px) { .tcbox { order:2; margin-left:auto; align-self:center; flex-direction:row; align-items:center; gap:8px; } .tcbox .tc { font-size:12px; } }
