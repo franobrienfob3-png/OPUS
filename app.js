@@ -189,7 +189,7 @@ function celda(m, c, v, f) {
 // ---------- vista ----------
 function renderTabs() {
   const activa = (S.vista === 'reglas' || S.vista === 'importar') ? 'resumenes' : S.vista;
-  $('tabs').innerHTML = [['dashboard', 'Dashboard'], ['flujo', 'Flujo'], ['cargar', 'Cargar'], ['movs', 'Movimientos'], ['deudas', 'Deudas'], ['resumenes', 'Resúmenes'], ['maestros', 'DDMM']].map(t =>
+  $('tabs').innerHTML = [['dashboard', 'Dashboard'], ['flujo', 'Cashflow'], ['cargar', 'Cargar'], ['movs', 'Movimientos'], ['deudas', 'Deudas'], ['resumenes', 'Resúmenes'], ['maestros', 'DDMM']].map(t =>
     '<button class="tab ' + (activa === t[0] ? 'on' : '') + '" data-v="' + t[0] + '">' + t[1] + '</button>').join('');
   $('tabs').querySelectorAll('.tab').forEach(b => b.onclick = () => irVista(b.dataset.v));
   actualizarCabecera();
@@ -837,7 +837,7 @@ function renderMovs() {
     '<div class="toolbar"><div class="search"><span class="lupa"></span><input id="mq" placeholder="Buscar…" value="' + esc(M.q) + '"></div>' +
       ddMov('cuentas', 'Cuentas', cuentasBase, M.cuentas) + ddMov('tipos', 'Tipos', tiposBase, M.tipos) +
       (M.cat ? '<button class="pill rojo" id="quitacat">' + esc(M.cat) + ' ×</button>' : '') +
-      '<span class="count">' + filas.length + ' de ' + base.length + ' movimientos</span><button class="mini" id="exportar" title="Descarga todos tus movimientos en un archivo CSV">Descargar CSV</button></div>' +
+      '<span class="count">' + filas.length + ' de ' + base.length + ' movimientos</span><button class="mini" id="exportar" title="Descarga todos tus movimientos en un archivo de Excel">Descargar Excel</button></div>' +
     '<div class="card tablewrap">' + tabla + '</div>';
 
   const pg = $('page');
@@ -875,20 +875,36 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && M.dd) { M.dd = ''; if (S.vista === 'movs' && M.movs) renderMovs(); }
 });
 
-// ----- descargar todos los movimientos (para revisarlos en otra planilla o con ayuda) -----
-function csvMovimientos(lista) {
-  const celda = v => { const t = String(v == null ? '' : v); return /[",\n;]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
-  const cols = [['Fecha', m => m.fecha], ['Tipo', m => m.tipo], ['Descripcion', m => m.desc], ['Monto', m => m.monto], ['Moneda', m => m.moneda],
-    ['Cuenta', m => m.cuenta], ['Cuenta Destino', m => m.destino], ['Monto Destino', m => m.montoDestino], ['Subcategoria', m => m.subcategoria],
-    ['Asignado A', m => m.asignado], ['Cuota', m => m.cuota], ['Origen', m => m.origen], ['Afecta Saldo', m => m.afecta], ['ID', m => m.id]];
-  return cols.map(c => c[0]).join(',') + '\n' + lista.slice().sort((a, b) => a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0)
-    .map(m => cols.map(c => celda(c[1](m))).join(',')).join('\n');
+// ----- descargar todos los movimientos en un Excel (.xlsx) -----
+function libroMovimientos(lista) {
+  const cols = [['Fecha', 'fecha'], ['Tipo', 'tipo'], ['Descripcion', 'desc'], ['Monto', 'monto'], ['Moneda', 'moneda'], ['Cuenta', 'cuenta'],
+    ['Cuenta Destino', 'destino'], ['Monto Destino', 'montoDestino'], ['Subcategoria', 'subcategoria'], ['Asignado A', 'asignado'],
+    ['Cuota', 'cuota'], ['Origen', 'origen'], ['Afecta Saldo', 'afecta'], ['ID', 'id']];
+  const orden = lista.slice().sort((a, b) => a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0);
+  const filas = [cols.map(c => c[0])].concat(orden.map(m => cols.map(c => m[c[1]] == null ? '' : m[c[1]])));
+  const ws = XLSX.utils.aoa_to_sheet(filas);
+  const serial = iso => { const p = String(iso).split('-').map(Number); return (Date.UTC(p[0], p[1] - 1, p[2]) - Date.UTC(1899, 11, 30)) / 86400000; };
+  orden.forEach((m, i) => {   // fechas y montos como fechas y números de verdad (no texto)
+    const r = i + 1;
+    ws[XLSX.utils.encode_cell({ r: r, c: 0 })] = { t: 'n', v: serial(m.fecha), z: 'dd/mm/yyyy' };
+    ['monto', 'montoDestino'].forEach(k => {
+      const c = cols.findIndex(x => x[1] === k), v = m[k];
+      if (v !== '' && v != null && isFinite(Number(v))) ws[XLSX.utils.encode_cell({ r: r, c: c })] = { t: 'n', v: Number(v), z: '#,##0.00' };
+    });
+  });
+  ws['!cols'] = [12, 14, 36, 14, 8, 22, 22, 14, 26, 24, 8, 26, 12, 14].map(w => ({ wch: w }));
+  ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: filas.length - 1, c: cols.length - 1 } }) };
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Movimientos');
+  return wb;
 }
 
-function descargarMovimientos() {
-  const blob = new Blob(['\ufeff' + csvMovimientos(M.movs)], { type: 'text/csv;charset=utf-8' });
+async function descargarMovimientos() {
+  try { await cargarXlsx(); } catch (e) { toast((e && e.message) || 'No se pudo preparar el Excel'); return; }
+  const datos = XLSX.write(libroMovimientos(M.movs), { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob([datos], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = 'movimientos-opus-' + hoyLocal() + '.csv';
+  a.href = URL.createObjectURL(blob); a.download = 'movimientos-opus-' + hoyLocal() + '.xlsx';
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   toast('Descargado: ' + M.movs.length + ' movimientos');
@@ -1597,7 +1613,7 @@ function renderDashboard() {
 // Un solo pedido ("cargarTodo") alimenta Movimientos, Deudas, Resúmenes, Dashboard y Cargar.
 // Las solapas se dibujan al instante con lo que ya hay y se refrescan en segundo plano.
 const K = { ts: 0, p: null, h: null };
-const TITULOS = { dashboard: 'Dashboard', flujo: 'Flujo de caja', cargar: 'Cargar', movs: 'Movimientos', deudas: 'Deudas', resumenes: 'Resúmenes' };
+const TITULOS = { dashboard: 'Dashboard', flujo: 'Cashflow', cargar: 'Cargar', movs: 'Movimientos', deudas: 'Deudas', resumenes: 'Resúmenes' };
 
 function traerTodo(forzar) {
   if (!forzar && K.p) return K.p;
@@ -1811,7 +1827,7 @@ function renderFlujo() {
   if (fijosActivos().some(v => v.Moneda === 'USD' && v.Movimiento === 'Gasto')) notas.push('Los fijos en dólares se pasan a pesos. ' + textoTC() + ' La tarjeta puede cobrar más por impuestos.');
   notas.push('No incluye gastos de efectivo o débito que todavía no hiciste. Cuanto más cargues, más preciso es.');
 
-  $('page').innerHTML = '<div class="titulo-fila"><h1>Flujo de caja</h1></div>' + datos + desp + hasta + tl +
+  $('page').innerHTML = '<div class="titulo-fila"><h1>Cashflow</h1></div>' + datos + desp + hasta + tl +
     '<div class="mut small" style="max-width:760px">' + notas.join('<br>') + '</div>';
 
   // mientras escribís el año (2 → 20 → 202 → 2026) el navegador ya da fechas "válidas": se espera a que el año sea real
@@ -1974,7 +1990,7 @@ function htmlResultadoCiclo() {
   return '<div class="card" style="padding:24px"><h2 style="margin:0 0 12px;font-size:20px;letter-spacing:-.02em">Listo, movimientos del mes cargados</h2><div class="kpis">' +
     [['Cargados', r.importados], ['Ya estaban', r.duplicados], ['Quitados', r.quitados], ['Pagos ignorados', r.pagosIgnorados]].map(k =>
       '<div class="card kpi"><span class="l">' + k[0] + '</span><span class="v">' + k[1] + '</span></div>').join('') + '</div>' +
-    '<p class="mut" style="font-weight:400;margin:16px 0 0">Quedaron como movimientos <b style="color:var(--text)">provisorios</b> de la tarjeta: ya suman en el Dashboard y en el Flujo, y no tocan tus saldos. ' +
+    '<p class="mut" style="font-weight:400;margin:16px 0 0">Quedaron como movimientos <b style="color:var(--text)">provisorios</b> de la tarjeta: ya suman en el Dashboard y en el Cashflow, y no tocan tus saldos. ' +
     'Cuando importes el resumen oficial se reemplazan solos.' + (r.reglasNuevas ? ' Se guardaron ' + r.reglasNuevas + ' reglas nuevas.' : '') + '</p>' +
     '<div style="display:flex;gap:8px;margin-top:20px;flex-wrap:wrap"><button class="btn primary" id="vermes">Ver el Dashboard</button><button class="btn" id="otro">Subir otro Excel</button><button class="btn" id="verreglas">Ver reglas</button></div></div>';
 }
