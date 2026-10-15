@@ -2018,7 +2018,7 @@ function mostrarLoader() {
 
 function actualizarCabecera() {
   const tc = tcActual(), v = $('tcval');
-  if (v) v.textContent = tc ? 'TC $ ' + fmtNum(tc) + (PREFS.tcManual > 0 ? ' · manual' : ' · BNA') : 'TC —';
+  if (v) v.textContent = tc ? 'TC: ' + fmtNum(tc) : 'TC: —';
   document.querySelectorAll('#vmon button').forEach(b => b.classList.toggle('on', b.dataset.m === VISTA_MON));
 }
 document.querySelectorAll('#vmon button').forEach(b => b.onclick = () => {
