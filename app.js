@@ -123,11 +123,25 @@ function toast(msg) {
 
 // ---------- formato ----------
 const fmtNum = n => Number(n).toLocaleString('es-AR', { minimumFractionDigits: Number.isInteger(Number(n)) ? 0 : 2, maximumFractionDigits: 2 });
-function fmtMoney(n, mon) {   // espacio fijo (nbsp) para que el símbolo no quede solo en la línea
+// Selector ARS / USD del encabezado: '' = cada monto en su moneda; 'ARS' o 'USD' = todo convertido con el tipo de cambio.
+let VISTA_MON = '';
+try { VISTA_MON = localStorage.getItem('vista_mon') || ''; } catch (e) { /* sin almacenamiento */ }
+function tcActual() { try { return tcEfectivo(); } catch (e) { return 0; } }
+function convertir(n, mon) {
+  const tc = tcActual();
+  let cargando = false;
+  try { cargando = S.vista === 'cargar'; } catch (e) { /* todavía no hay pantalla */ }
+  if (!VISTA_MON || !tc || cargando) return { n: n, mon: mon };   // al cargar un movimiento los montos van siempre en su moneda
+  if (VISTA_MON === 'USD' && mon === 'ARS') return { n: n / tc, mon: 'USD' };
+  if (VISTA_MON === 'ARS' && mon === 'USD') return { n: n * tc, mon: 'ARS' };
+  return { n: n, mon: mon };
+}
+function fmtMoneyRaw(n, mon) {   // espacio fijo (nbsp) para que el símbolo no quede solo en la línea
   if (mon === 'USD') return 'US$ ' + fmtNum(n);
   if (mon === 'UVA') return fmtNum(n) + ' UVA';
   return '$ ' + fmtNum(n);
 }
+function fmtMoney(n, mon) { const c = convertir(n, mon); return fmtMoneyRaw(c.n, c.mon); }
 const fechaCorta = iso => { const p = String(iso).split('-'); return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : iso; };
 
 function celda(m, c, v, f) {
@@ -153,6 +167,7 @@ function renderTabs() {
   $('tabs').innerHTML = [['dashboard', 'Dashboard'], ['flujo', 'Flujo'], ['cargar', 'Cargar'], ['movs', 'Movimientos'], ['deudas', 'Deudas'], ['resumenes', 'Resúmenes'], ['maestros', 'DDMM']].map(t =>
     '<button class="tab ' + (activa === t[0] ? 'on' : '') + '" data-v="' + t[0] + '">' + t[1] + '</button>').join('');
   $('tabs').querySelectorAll('.tab').forEach(b => b.onclick = () => irVista(b.dataset.v));
+  actualizarCabecera();
   const activa_ = $('tabs').querySelector('.tab.on');
   if (activa_ && activa_.scrollIntoView) activa_.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
 }
@@ -221,6 +236,9 @@ function renderPage() {
   $('page').querySelectorAll('[data-fix]').forEach(b => b.onclick = () => corregir(Number(b.dataset.fix)));
   $('page').querySelectorAll('[data-ir]').forEach(b => b.onclick = () => irA(Number(b.dataset.ir)));
   enlazarTC();
+  const cs = document.createElement('button');
+  cs.className = 'btn'; cs.style.marginTop = '24px'; cs.textContent = 'Cerrar sesión'; cs.onclick = salir;
+  $('page').appendChild(cs);
 }
 
 function avisosHtml() {
@@ -1241,7 +1259,25 @@ function renderDetalleResumen(r) {
 const DB = { movs: null, deudas: [], res: [], hoy: '', periodo: '' };
 
 const mesAnterior = ym => { let a = Number(ym.slice(0, 4)), m = Number(ym.slice(5, 7)) - 1; if (m < 1) { m = 12; a--; } return a + '-' + ('0' + m).slice(-2); };
-const dosMon = (ars, usd) => fmtMoney(ars, 'ARS') + (usd ? '  ·  ' + fmtMoney(usd, 'USD') : '');
+const dosMon = (ars, usd) => {
+  const tc = tcActual();
+  if (VISTA_MON && tc) return fmtMoneyRaw(VISTA_MON === 'USD' ? ars / tc + (usd || 0) : ars + (usd || 0) * tc, VISTA_MON);   // dos monedas -> una sola
+  return fmtMoney(ars, 'ARS') + (usd ? '  ·  ' + fmtMoney(usd, 'USD') : '');
+};
+/** Pesos y dólares con signo: "− $ x · US$ y", o un solo total si hay conversión activa. */
+function dosMonSigno(ars, usd) {
+  const tc = tcActual();
+  if (VISTA_MON && tc) { const n = VISTA_MON === 'USD' ? ars / tc + usd : ars + usd * tc; return (n < 0 ? '− ' : '') + fmtMoneyRaw(Math.abs(n), VISTA_MON); }
+  return (ars < 0 ? '− ' : '') + fmtMoney(Math.abs(ars), 'ARS') + '  ·  ' + (usd < 0 ? '− ' : '') + fmtMoney(Math.abs(usd), 'USD');
+}
+function centroDonut(n) {
+  const c = convertir(n, 'ARS');
+  return c.mon === 'ARS' && c.n >= 1e6 ? '$ ' + (c.n / 1e6).toFixed(2).replace('.', ',') + ' M' : fmtMoneyRaw(c.mon === 'ARS' ? Math.round(c.n) : c.n, c.mon);
+}
+function cortoMiles(n) {
+  const c = convertir(n, 'ARS');
+  return c.mon === 'USD' ? fmtNum(Math.round(c.n)) : fmtNum(Math.round(c.n / 1000)) + 'k';
+}
 const porc = (a, b) => b ? Math.round(a / b * 100) : 0;
 
 /** Saldo de cada cuenta: lo que sumaron o restaron los movimientos que afectan saldo (ajustes incluidos). */
@@ -1386,11 +1422,11 @@ function renderDashboard() {
   const kpi = (l, v, s, color) => '<div class="card kpi"><span class="l">' + l + '</span><span class="v" ' + (color ? 'style="color:' + color + '"' : '') + '>' + esc(v) + '</span></div>';
   const tasa = ing.ARS ? porc(ahorro.ARS, ing.ARS) : null;
   const kpis = '<div class="kpis cinco">' +
-    kpi('Ingresos', fmtMoney(ing.ARS, 'ARS'), ing.USD ? fmtMoney(ing.USD, 'USD') : 'en pesos') +
-    kpi('Gastos', fmtMoney(gas.ARS, 'ARS'), (gas.USD ? fmtMoney(gas.USD, 'USD') + ' en dólares · ' : '') + (cuotas.ARS || cuotas.USD ? 'más ' + dosMon(cuotas.ARS, cuotas.USD) + ' en cuotas de deudas' : 'en pesos'), 'var(--danger)') +
-    kpi('Ahorro del período', (ahorro.ARS < 0 ? '− ' : '') + fmtMoney(Math.abs(ahorro.ARS), 'ARS'), tasa === null ? 'sin ingresos cargados' : tasa + '% de lo que ingresó, después de cuotas de deudas') +
-    kpi('Patrimonio estimado', (pat.ARS < 0 ? '− ' : '') + fmtMoney(Math.abs(pat.ARS), 'ARS'), 'en pesos · ' + (pat.USD < 0 ? '− ' : '') + fmtMoney(Math.abs(pat.USD), 'USD')) +
-    kpi('Deuda de tarjeta', tj ? fmtMoney(tj.ars, 'ARS') : '—', tj ? (tj.usd ? fmtMoney(tj.usd, 'USD') + ' · ' : '') + 'pago mínimo ' + fmtMoney(tj.r.pagoMinimo, 'ARS') : 'sin resúmenes importados') + '</div>';
+    kpi('Ingresos', (VISTA_MON ? dosMonSigno(ing.ARS, ing.USD) : fmtMoney(ing.ARS, 'ARS')), ing.USD ? fmtMoney(ing.USD, 'USD') : 'en pesos') +
+    kpi('Gastos', (VISTA_MON ? dosMonSigno(gas.ARS, gas.USD) : fmtMoney(gas.ARS, 'ARS')), (gas.USD ? fmtMoney(gas.USD, 'USD') + ' en dólares · ' : '') + (cuotas.ARS || cuotas.USD ? 'más ' + dosMon(cuotas.ARS, cuotas.USD) + ' en cuotas de deudas' : 'en pesos'), 'var(--danger)') +
+    kpi('Ahorro del período', VISTA_MON ? dosMonSigno(ahorro.ARS, ahorro.USD) : (ahorro.ARS < 0 ? '− ' : '') + fmtMoney(Math.abs(ahorro.ARS), 'ARS'), tasa === null ? 'sin ingresos cargados' : tasa + '% de lo que ingresó, después de cuotas de deudas') +
+    kpi('Patrimonio estimado', VISTA_MON ? dosMonSigno(pat.ARS, pat.USD) : (pat.ARS < 0 ? '− ' : '') + fmtMoney(Math.abs(pat.ARS), 'ARS'), 'en pesos · ' + (pat.USD < 0 ? '− ' : '') + fmtMoney(Math.abs(pat.USD), 'USD')) +
+    kpi('Deuda de tarjeta', tj ? (VISTA_MON ? dosMonSigno(tj.ars, tj.usd) : fmtMoney(tj.ars, 'ARS')) : '—', tj ? (tj.usd ? fmtMoney(tj.usd, 'USD') + ' · ' : '') + 'pago mínimo ' + fmtMoney(tj.r.pagoMinimo, 'ARS') : 'sin resúmenes importados') + '</div>';
 
   const periodos = '<select class="in" id="dbper" style="width:auto;margin:0">' + meses.slice(0, 12).map(ym => op(ym, per, nombreMes(ym))).join('') +
     op('anio', per, 'Año ' + anio) + op('todo', per, 'Todo') + '</select>';
@@ -1400,7 +1436,7 @@ function renderDashboard() {
   const grupoHtml = lista => lista.length ? lista.map(x => '<div class="dgr"><div class="dfila"><span class="n">' + esc(x.n) + '</span><span class="mono mut">' + porc(x.total, gas.ARS) + '%</span><span class="mono">' + esc(fmtMoney(x.total, 'ARS')) + '</span></div>' + barra(porc(x.total, gas.ARS)) + '</div>').join('') : '<div class="mut" style="font-weight:400">Sin datos</div>';
 
   const evolucion = ult.length ? '<div class="evol">' + ult.map(x => '<div class="evcol"><div class="evbars"><i class="ing" style="height:' + Math.round(x.i / maxEv * 100) + '%" title="Ingresos"></i><i class="gas" style="height:' + Math.round(x.g / maxEv * 100) + '%" title="Gastos"></i></div>' +
-    '<span class="mut small">' + esc(MESES_CORTO[Number(x.ym.slice(5, 7)) - 1]) + '</span><span class="mono small ' + (x.i - x.g < 0 ? 'neg' : '') + '">' + (x.i - x.g < 0 ? '−' : '') + esc(fmtNum(Math.round(Math.abs(x.i - x.g) / 1000))) + 'k</span></div>').join('') + '</div>' +
+    '<span class="mut small">' + esc(MESES_CORTO[Number(x.ym.slice(5, 7)) - 1]) + '</span><span class="mono small ' + (x.i - x.g < 0 ? 'neg' : '') + '">' + (x.i - x.g < 0 ? '−' : '') + esc(cortoMiles(Math.abs(x.i - x.g))) + '</span></div>').join('') + '</div>' +
     '<div class="mut small" style="margin-top:8px"><span class="sw ing"></span> Ingresos &nbsp; <span class="sw gas"></span> Gastos</div>' : '';
 
   const presHtml = pres.length
@@ -1414,9 +1450,9 @@ function renderDashboard() {
   const patHtml = fila('En cuentas', esc(dosMon(sal.total.ARS, sal.total.USD))) +
     fila('Te deben', esc(dosMon(cobrar.ARS, cobrar.USD))) +
     fila('Tarjeta por pagar', '− ' + esc(dosMon(tjAR, tjUS))) +
-    fila('Deudas pendientes', '− ' + esc(fmtMoney(deuda.ARS, 'ARS') + (deuda.USD ? '  ·  ' + fmtMoney(deuda.USD, 'USD') : ''))) +
+    fila('Deudas pendientes', '− ' + esc(dosMon(deuda.ARS, deuda.USD))) +
     (deuda.UVA ? fila('Deuda en UVA <span class="mut small">(no se suma)</span>', esc(fmtMoney(deuda.UVA, 'UVA'))) : '') +
-    '<div class="dfila total"><span class="n"><b>Patrimonio estimado</b></span><span class="mono">' + (pat.ARS < 0 ? '− ' : '') + esc(fmtMoney(Math.abs(pat.ARS), 'ARS')) + '  ·  ' + (pat.USD < 0 ? '− ' : '') + esc(fmtMoney(Math.abs(pat.USD), 'USD')) + '</span></div>';
+    '<div class="dfila total"><span class="n"><b>Patrimonio estimado</b></span><span class="mono">' + esc(dosMonSigno(pat.ARS, pat.USD)) + '</span></div>';
 
   const prox = deudasAct.filter(d => d.proximo).sort((a, b) => a.proximo < b.proximo ? -1 : 1).slice(0, 6);
   const diasA = iso => Math.round((new Date(iso + 'T00:00:00') - new Date(DB.hoy + 'T00:00:00')) / 86400000);
@@ -1440,7 +1476,7 @@ function renderDashboard() {
   const topHtml = top.length ? top.map(m => fila(esc(m.desc) + ' <span class="mut small">' + esc(fechaCorta(m.fecha).slice(0, 5)) + (m.subcategoria ? ' · ' + esc(m.subcategoria) : '') + '</span>', esc(fmtMoney(m.monto, 'ARS')))).join('') : '<div class="mut" style="font-weight:400">Sin gastos en este período</div>';
 
   const leyenda = cats.map(c => '<div class="leg"><span class="sw" style="background:' + c.color + '"></span><span class="n">' + esc(c.n) + '</span><span class="mono">' + esc(fmtMoney(c.total, 'ARS')) + '</span><span class="mono mut pc">' + porc(c.total, gas.ARS) + '%</span></div>').join('');
-  const catHtml = '<div class="donutbox chico"><div class="donut" style="background:' + donut + '"><div class="hole"><span class="mut" style="font-size:12px;font-weight:400">Gastos</span><span class="mono" style="font-size:15px;font-weight:600">' + esc(gas.ARS >= 1e6 ? '$ ' + (gas.ARS / 1e6).toFixed(2).replace('.', ',') + ' M' : fmtMoney(Math.round(gas.ARS), 'ARS')) + '</span></div></div><div class="legend">' + (leyenda || '<div class="mut" style="font-weight:400">Sin gastos en pesos</div>') + '</div></div>';
+  const catHtml = '<div class="donutbox chico"><div class="donut" style="background:' + donut + '"><div class="hole"><span class="mut" style="font-size:12px;font-weight:400">Gastos</span><span class="mono" style="font-size:15px;font-weight:600">' + esc(centroDonut(gas.ARS)) + '</span></div></div><div class="legend">' + (leyenda || '<div class="mut" style="font-weight:400">Sin gastos en pesos</div>') + '</div></div>';
 
   // caja real: qué entró y salió de tus cuentas en el período (misma lógica que "Saldo por cuenta")
   const ctasDe = {}, tjsDe = {};
@@ -1476,12 +1512,12 @@ function renderDashboard() {
   const filasCaja = ordenCaja.filter(c => caja.filas[c] && (caja.filas[c].ARS || caja.filas[c].USD));
   const cierreC = { ARS: caja.inicio.ARS || 0, USD: caja.inicio.USD || 0 };
   filasCaja.forEach(c => { cierreC.ARS += caja.filas[c].ARS || 0; cierreC.USD += caja.filas[c].USD || 0; });
-  const celdaC = (v, mon) => v ? (v < 0 ? '− ' : '+ ') + esc(fmtMoney(Math.abs(v), mon)) : '<span class="mut">—</span>';
+  const celdaC = (v, mon) => v ? (v < 0 ? '− ' : '+ ') + esc(fmtMoneyRaw(Math.abs(v), mon)) : '<span class="mut">—</span>';
   const filaC = (a, b, c, cls) => '<div class="dfila caja ' + (cls || '') + '"><span class="n">' + a + '</span><span class="mono">' + b + '</span><span class="mono">' + c + '</span></div>';
   const cajaHtml = filaC('', 'Pesos', 'Dólares', 'cab mut small') +
-    (desdeC ? filaC('Saldo al inicio', esc(fmtMoney(caja.inicio.ARS || 0, 'ARS')), esc(fmtMoney(caja.inicio.USD || 0, 'USD'))) : '') +
+    (desdeC ? filaC('Saldo al inicio', esc(fmtMoneyRaw(caja.inicio.ARS || 0, 'ARS')), esc(fmtMoneyRaw(caja.inicio.USD || 0, 'USD'))) : '') +
     filasCaja.map(c => filaC(esc(c), celdaC(caja.filas[c].ARS, 'ARS'), celdaC(caja.filas[c].USD, 'USD'))).join('') +
-    filaC('<b>Saldo al cierre</b>', esc(fmtMoney(cierreC.ARS, 'ARS')), esc(fmtMoney(cierreC.USD, 'USD')), 'total') +
+    filaC('<b>Saldo al cierre</b>', esc(fmtMoneyRaw(cierreC.ARS, 'ARS')), esc(fmtMoneyRaw(cierreC.USD, 'USD')), 'total') +
     '';
 
   $('page').innerHTML =
@@ -1664,6 +1700,7 @@ function armarFlujo() {
 
 function guardarPref(datos) {
   Object.assign(PREFS, datos);
+  actualizarCabecera();
   render();
   llamar('guardarPrefs', datos).catch(e => toast((e && e.message) || 'No se pudo guardar'));
 }
@@ -1684,7 +1721,7 @@ function renderFlujo() {
     hasta = card('Hasta que cobres', '<div class="mut" style="font-weight:400">Elegí arriba la fecha en que cobrás y te digo cuánto podés gastar hasta ese día.</div>');
   } else {
     const h = F.hasta, neg = h.libre < 0;
-    const lineas = [fila('Plata hoy en tus cuentas (pesos)', money(F.saldo))]
+    const lineas = [fila('Plata hoy en tus cuentas' + (VISTA_MON ? '' : ' (pesos)'), money(F.saldo))]
       .concat(h.salidas.map(e => fila(esc(e.concepto) + ' <span class="mut small">' + esc(fechaCorta(e.fecha).slice(0, 5)) + '</span>', money(e.monto))))
       .concat(h.entradas.map(e => fila(esc(e.concepto) + ' <span class="mut small">' + esc(fechaCorta(e.fecha).slice(0, 5)) + '</span>', money(e.monto))));
     hasta = card('Para llegar al cobro (' + esc(fechaCorta(h.cobro).slice(0, 5)) + ', en ' + h.dias + (h.dias === 1 ? ' día' : ' días') + ')',
@@ -1713,7 +1750,7 @@ function renderFlujo() {
     : '<div class="mut" style="font-weight:400">No hay movimientos previstos en este período.</div>';
   const horizonte = '<div class="seg" id="horiz" style="margin-bottom:12px">' + [30, 60, 90].map(n => '<button class="' + (FL.dias === n ? 'on' : '') + '" data-d="' + n + '">' + n + ' días</button>').join('') + '</div>';
   const tl = card('Qué viene en los próximos días', horizonte +
-    '<div class="tl cab"><span>Fecha</span><span>Descripción</span><span class="mono">Monto</span><span class="mono sal">Saldo</span></div>' + fila('Hoy: lo que tenés en cuentas (pesos)', money(F.saldo), 'tlini') + filasTl +
+    '<div class="tl cab"><span>Fecha</span><span>Descripción</span><span class="mono">Monto</span><span class="mono sal">Saldo</span></div>' + fila('Hoy: lo que tenés en cuentas' + (VISTA_MON ? '' : ' (pesos)'), money(F.saldo), 'tlini') + filasTl +
     '');
 
   const notas = [];
@@ -1738,7 +1775,7 @@ const tcEfectivo = () => (PREFS.tcManual > 0 ? PREFS.tcManual : TC.venta) || 0;
 function cargarTC() {
   llamarCore('cotizacion', []).then(r => {
     if (!r) return;
-    Object.assign(TC, r);
+    Object.assign(TC, r); actualizarCabecera();
     if ((S.vista === 'flujo' || (S.vista === 'maestros' && S.id === 'fijos')) && !hayEdicionAbierta()) render();
   }).catch(() => { /* sin cotización automática: se puede poner una a mano */ });
 }
@@ -1762,10 +1799,10 @@ function resumenFijosHtml() {
   const fila = (a, b, cls) => '<div class="dfila ' + (cls || '') + '"><span class="n">' + a + '</span><span class="mono">' + b + '</span></div>';
   const enTarjeta = fl.filter(v => v.Movimiento === 'Gasto' && fijoEsDeTarjeta(v)).reduce((s, v) => s + fijoEnPesos(v), 0);
   return '<div class="card cuerpo-c" style="max-width:640px"><h2 class="titulo-c">Total de fijos al mes (en pesos)</h2>' +
-    fila('Gastos fijos en pesos', esc(fmtMoney(g.ARS, 'ARS'))) +
-    (g.USD ? fila('Gastos fijos en dólares <span class="mut small">' + (tc ? esc(fmtMoney(g.USD, 'USD')) + ' × ' + esc(fmtNum(tc)) : esc(fmtMoney(g.USD, 'USD')) + ', sin cotización') + '</span>', tc ? esc(fmtMoney(Math.round(g.USD * tc * 100) / 100, 'ARS')) : '—') : '') +
-    fila('<b>Total de gastos fijos</b>' + (enTarjeta ? ' <span class="mut small">· ' + esc(fmtMoney(Math.round(enTarjeta), 'ARS')) + ' van por la tarjeta</span>' : ''), '<b>' + esc(fmtMoney(Math.round(totG * 100) / 100, 'ARS')) + '</b>', 'total') +
-    (totI ? fila('Ingresos fijos', esc(fmtMoney(Math.round(totI * 100) / 100, 'ARS'))) + fila('Te queda después de los fijos', esc((totI - totG < 0 ? '− ' : '') + fmtMoney(Math.abs(Math.round((totI - totG) * 100) / 100), 'ARS'))) : '') +
+    fila('Gastos fijos en pesos', esc(fmtMoneyRaw(g.ARS, 'ARS'))) +
+    (g.USD ? fila('Gastos fijos en dólares <span class="mut small">' + (tc ? esc(fmtMoneyRaw(g.USD, 'USD')) + ' × ' + esc(fmtNum(tc)) : esc(fmtMoneyRaw(g.USD, 'USD')) + ', sin cotización') + '</span>', tc ? esc(fmtMoneyRaw(Math.round(g.USD * tc * 100) / 100, 'ARS')) : '—') : '') +
+    fila('<b>Total de gastos fijos</b>' + (enTarjeta ? ' <span class="mut small">· ' + esc(fmtMoneyRaw(Math.round(enTarjeta), 'ARS')) + ' van por la tarjeta</span>' : ''), '<b>' + esc(fmtMoneyRaw(Math.round(totG * 100) / 100, 'ARS')) + '</b>', 'total') +
+    (totI ? fila('Ingresos fijos', esc(fmtMoneyRaw(Math.round(totI * 100) / 100, 'ARS'))) + fila('Te queda después de los fijos', esc((totI - totG < 0 ? '− ' : '') + fmtMoneyRaw(Math.abs(Math.round((totI - totG) * 100) / 100), 'ARS'))) : '') +
     '<div class="mut small" style="margin-top:12px">' + esc(textoTC()) + '</div>' +
     '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap"><input class="in" id="tcmanual" inputmode="decimal" autocomplete="off" placeholder="Usar otra cotización" value="' + (PREFS.tcManual > 0 ? esc(String(PREFS.tcManual).replace('.', ',')) : '') + '" style="width:200px;margin:0">' +
     (PREFS.tcManual > 0 ? '<button class="mini" id="tcauto">Volver a la automática</button>' : '') + '</div></div>';
@@ -1979,5 +2016,17 @@ function mostrarLoader() {
   l.style.opacity = '1';
 }
 
-document.getElementById('salir').onclick = salir;
+function actualizarCabecera() {
+  const tc = tcActual(), v = $('tcval');
+  if (v) v.textContent = tc ? 'TC $ ' + fmtNum(tc) + (PREFS.tcManual > 0 ? ' · manual' : ' · BNA') : 'TC —';
+  document.querySelectorAll('#vmon button').forEach(b => b.classList.toggle('on', b.dataset.m === VISTA_MON));
+}
+document.querySelectorAll('#vmon button').forEach(b => b.onclick = () => {
+  if (!tcActual()) { toast('Todavía no tengo el tipo de cambio'); return; }
+  VISTA_MON = VISTA_MON === b.dataset.m ? '' : b.dataset.m;   // tocar de nuevo el elegido vuelve a cada moneda original
+  try { localStorage.setItem('vista_mon', VISTA_MON); } catch (e) { /* sin almacenamiento */ }
+  actualizarCabecera();
+  if (typeof hayEdicionAbierta === 'function' && !hayEdicionAbierta()) render();
+});
+actualizarCabecera();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { /* sin instalación: no pasa nada */ });
