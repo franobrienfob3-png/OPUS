@@ -241,9 +241,9 @@ label.recl { display:flex; gap:8px; align-items:center; color:var(--text-2); cur
 
 /* Dashboard */
 .small { font-size:12px; font-weight:400; }
-.dgrid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px; align-items:start; }
-.dgrid .ancho { grid-column:1 / -1; }
-.dgrid .card { min-width:0; }
+.dgrid-db { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px; }
+.dgrid-db .ancho { grid-column:1 / -1; }
+.dgrid-db .card { min-width:0; }
 .dfila { display:flex; align-items:baseline; gap:10px; padding:7px 0; border-top:1px solid var(--border-row); font-size:14px; }
 .dfila:first-of-type { border-top:0; }
 .dfila .n { flex:1; min-width:0; overflow-wrap:anywhere; }
@@ -268,7 +268,7 @@ label.recl { display:flex; gap:8px; align-items:center; color:var(--text-2); cur
 .donutbox.chico .donut { width:160px; height:160px; }
 .donutbox.chico .donut .hole { inset:22px; }
 @media (max-width:1180px) { .donutbox.chico { grid-template-columns:1fr; justify-items:center; } .donutbox.chico .legend { width:100%; } }
-@media (max-width:900px) { .dgrid { grid-template-columns:minmax(0,1fr); } }
+@media (max-width:900px) { .dgrid-db { grid-template-columns:minmax(0,1fr); } }
 
 /* iPhone: el campo de fecha ignora el ancho y se sale del cuadro; se lo obliga a respetarlo */
 input[type="date"].in { -webkit-appearance:none; appearance:none; display:block; width:100%; min-width:0; max-width:100%; box-sizing:border-box; text-align:left; line-height:38px; }

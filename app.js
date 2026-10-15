@@ -1383,7 +1383,7 @@ function renderDashboard() {
   if (cf.total.ARS) avisos.push('Ya tenés comprometidos ' + fmtMoney(cf.total.ARS, 'ARS') + ' en cuotas de tarjeta hacia adelante (' + fmtMoney(cf.prox.ARS, 'ARS') + ' en el próximo resumen).');
   if (sinCat) avisos.push(sinCat + ' gastos sin categorizar en este período: asignales una categoría en Movimientos.');
 
-  const kpi = (l, v, s, color) => '<div class="card kpi"><span class="l">' + l + '</span><span class="v" ' + (color ? 'style="color:' + color + '"' : '') + '>' + esc(v) + '</span><span class="s">' + esc(s) + '</span></div>';
+  const kpi = (l, v, s, color) => '<div class="card kpi"><span class="l">' + l + '</span><span class="v" ' + (color ? 'style="color:' + color + '"' : '') + '>' + esc(v) + '</span></div>';
   const tasa = ing.ARS ? porc(ahorro.ARS, ing.ARS) : null;
   const kpis = '<div class="kpis cinco">' +
     kpi('Ingresos', fmtMoney(ing.ARS, 'ARS'), ing.USD ? fmtMoney(ing.USD, 'USD') : 'en pesos') +
@@ -1401,7 +1401,7 @@ function renderDashboard() {
 
   const evolucion = ult.length ? '<div class="evol">' + ult.map(x => '<div class="evcol"><div class="evbars"><i class="ing" style="height:' + Math.round(x.i / maxEv * 100) + '%" title="Ingresos"></i><i class="gas" style="height:' + Math.round(x.g / maxEv * 100) + '%" title="Gastos"></i></div>' +
     '<span class="mut small">' + esc(MESES_CORTO[Number(x.ym.slice(5, 7)) - 1]) + '</span><span class="mono small ' + (x.i - x.g < 0 ? 'neg' : '') + '">' + (x.i - x.g < 0 ? '−' : '') + esc(fmtNum(Math.round(Math.abs(x.i - x.g) / 1000))) + 'k</span></div>').join('') + '</div>' +
-    '<div class="mut small" style="margin-top:8px"><span class="sw ing"></span> Ingresos &nbsp; <span class="sw gas"></span> Gastos y cuotas de deudas &nbsp; · debajo de cada mes: lo que sobró o faltó, en miles de pesos</div>' : '';
+    '<div class="mut small" style="margin-top:8px"><span class="sw ing"></span> Ingresos &nbsp; <span class="sw gas"></span> Gastos</div>' : '';
 
   const presHtml = pres.length
     ? '<div class="dfila" style="margin-bottom:10px"><span class="n"><b>Total</b></span><span class="mono mut">' + porc(presReal, presTope) + '%</span><span class="mono">' + esc(fmtMoney(presReal, 'ARS')) + ' / ' + esc(fmtMoney(presTope, 'ARS')) + '</span></div>' + barra(porc(presReal, presTope), presReal > presTope) +
@@ -1429,7 +1429,7 @@ function renderDashboard() {
     '<div class="dfila total"><span class="n"><b>Falta pagar</b></span><span class="mono">' + esc(dosMon(tj.ars, tj.usd)) + '</span></div>' +
     fila('Vencimiento', esc(tj.r.vencimiento ? fechaCorta(tj.r.vencimiento) + (tj.dias !== null ? ' (' + (tj.dias < 0 ? 'hace ' + (-tj.dias) + ' d' : tj.dias === 0 ? 'hoy' : 'en ' + tj.dias + ' d') + ')' : '') : '—')) +
     fila('Arrastrado de antes', esc(fmtMoney(tj.r.arrastrado.ars, 'ARS'))) +
-    '<div class="mut small" style="margin-top:8px">Los pagos se toman de Cargar → Pago de tarjeta.</div>'
+    ''
     : '<div class="mut" style="font-weight:400">Importá un resumen para ver la deuda de la tarjeta.</div>';
 
   const cuotasHtml = cf.n ? fila('Próximo resumen', esc(dosMon(cf.prox.ARS, cf.prox.USD))) + fila('Total hasta terminarlas', esc(dosMon(cf.total.ARS, cf.total.USD))) +
@@ -1482,12 +1482,12 @@ function renderDashboard() {
     (desdeC ? filaC('Saldo al inicio', esc(fmtMoney(caja.inicio.ARS || 0, 'ARS')), esc(fmtMoney(caja.inicio.USD || 0, 'USD'))) : '') +
     filasCaja.map(c => filaC(esc(c), celdaC(caja.filas[c].ARS, 'ARS'), celdaC(caja.filas[c].USD, 'USD'))).join('') +
     filaC('<b>Saldo al cierre</b>', esc(fmtMoney(cierreC.ARS, 'ARS')), esc(fmtMoney(cierreC.USD, 'USD')), 'total') +
-    '<div class="mut small" style="margin-top:10px">Es plata real: lo que entró y salió de tus cuentas. Por eso no coincide con “Ahorro”, que cuenta los gastos de la tarjeta cuando aparecen en el resumen y no cuando pagás la tarjeta. Si “Ajustes de saldo” es grande, hay movimientos que todavía no cargaste.</div>';
+    '';
 
   $('page').innerHTML =
     '<div class="titulo-fila"><h1>Dashboard</h1>' + periodos + '</div>' + kpis +
     (avisos.length ? card('Para mirar', '<ul class="avisos">' + avisos.map(a => '<li>' + esc(a) + '</li>').join('') + '</ul>') : '') +
-    '<div class="dgrid">' +
+    '<div class="dgrid-db">' +
     card('Ingresos y gastos por mes', evolucion || '<div class="mut" style="font-weight:400">Sin datos</div>', 'ancho') +
     card('En qué se va la plata', catHtml) +
     card('Presupuesto vs real' + (nMeses > 1 ? ' <span class="mut" style="text-transform:none;letter-spacing:0">(' + nMeses + ' meses)</span>' : ''), presHtml) +
@@ -1501,7 +1501,7 @@ function renderDashboard() {
     card('Cuotas de tarjeta comprometidas', cuotasHtml) +
     card('Próximos pagos de deudas', deudasHtml) +
     '</div>' +
-    '<div class="mut small" style="max-width:760px">El patrimonio es una estimación: suma tus cuentas (según los movimientos que cargaste) y lo que te deben, y resta la tarjeta y las deudas pendientes. Cada moneda va por separado, sin convertir.</div>';
+    '';
   $('dbper').onchange = e => { DB.periodo = e.target.value; renderDashboard(); };
 }
 
@@ -1675,9 +1675,9 @@ function renderFlujo() {
   const card = (t, html) => '<div class="card cuerpo-c"><h2 class="titulo-c">' + t + '</h2>' + html + '</div>';
   const fila = (a, b, cls) => '<div class="dfila ' + (cls || '') + '"><span class="n">' + a + '</span><span class="mono">' + b + '</span></div>';
 
-  const datos = card('Tus datos', '<div class="dgrid" style="gap:0 16px"><label class="f">¿Cuándo cobrás?<input class="in" type="date" id="fcobro" value="' + esc(PREFS.proximoCobro) + '"></label>' +
-    '<label class="f">' + (consumosProvisorios().libres.length ? 'Otros consumos de la tarjeta que no estén en el Excel (opcional)' : 'Lo que ya gastaste con la tarjeta este ciclo') + '<input class="in" id="fconsumo" inputmode="decimal" autocomplete="off" placeholder="0" value="' + (PREFS.consumoCiclo ? esc(String(PREFS.consumoCiclo).replace('.', ',')) : '') + '">' +
-    '<div class="ayuda">' + (consumosProvisorios().libres.length ? 'Ya tengo ' + consumosProvisorios().libres.length + ' compras cargadas del Excel (' + esc(fmtMoney(consumosProvisorios().total, 'ARS')) + ', hasta el ' + esc(fechaCorta(consumosProvisorios().ultima)) + '), sin fijos ni cuotas. Acá sumá solo lo que falte.' : 'Mirálo en el homebanking, sin contar las cuotas ni tus fijos de la tarjeta (seguro, suscripciones…): esos los sumo yo. O cargá el Excel del banco en Resúmenes y se calcula solo.') + '</div></label></div>');
+  const datos = card('Tus datos', '<div class="dgrid-db" style="gap:0 16px"><label class="f">Fecha cobro<input class="in" type="date" id="fcobro" value="' + esc(PREFS.proximoCobro) + '"></label>' +
+    '<label class="f">' + 'Otros consumos sin cargar' + '<input class="in" id="fconsumo" inputmode="decimal" autocomplete="off" placeholder="0" value="' + (PREFS.consumoCiclo ? esc(String(PREFS.consumoCiclo).replace('.', ',')) : '') + '">' +
+    '</label></div>');
 
   let hasta;
   if (!F.hasta) {
@@ -1700,11 +1700,10 @@ function renderFlujo() {
     const signo = n => (n < 0 ? '− ' : '+ ') + fmtMoney(Math.abs(n), 'ARS');
     const lin2 = [fila('Lo que te queda al llegar al cobro', money(h.libre))]
       .concat(d.post.map(e => fila(esc(e.concepto) + ' <span class="mut small">' + esc(fechaCorta(e.fecha).slice(0, 5)) + '</span>', esc(signo(e.monto)))));
-    desp = card('Saldo que te queda después de cobrar',
+    desp = card('Resto post-cobro',
       '<div class="gran ' + (neg2 ? 'bad' : '') + '">' + esc(money(d.libre2)) + '</div>' +
-      '<div class="mut" style="font-weight:400;margin:2px 0 14px">' + (neg2 ? 'Cobrando el ' + esc(fechaCorta(h.cobro).slice(0, 5)) + ' y pagando todo lo comprometido hasta el ' + esc(fechaCorta(d.siguiente).slice(0, 5)) + ', te faltan ' + esc(fmtMoney(-d.libre2, 'ARS')) + ' para llegar al siguiente cobro.' :
-        'Después de cobrar el ' + esc(fechaCorta(h.cobro).slice(0, 5)) + ' y pagar la tarjeta, las cuotas y lo comprometido hasta el ' + esc(fechaCorta(d.siguiente).slice(0, 5)) + ', te quedan para gastar, <b style="color:var(--text)">~' + esc(fmtMoney(Math.round(d.porDia2), 'ARS')) + ' por día</b>.') + '</div>' +
-      (h.libre < 0 ? '<div class="aviso" style="margin-bottom:12px">Ojo: antes de cobrar te faltan ' + esc(fmtMoney(-h.libre, 'ARS')) + '. Para llegar al cobro vas a tener que postergar algún pago (por ejemplo la tarjeta vencida, que genera intereses) o usar otra plata. El detalle está en “Para llegar al cobro”.</div>' : '') +
+      '<div class="mut" style="font-weight:400;margin:2px 0 14px">' + (neg2 ? 'Saldo tras el cobro del ' + esc(fechaCorta(h.cobro).slice(0, 5)) + ' y los compromisos hasta el ' + esc(fechaCorta(d.siguiente).slice(0, 5)) + ': faltan ' + esc(fmtMoney(-d.libre2, 'ARS')) + '.' :
+        'Saldo tras el cobro del ' + esc(fechaCorta(h.cobro).slice(0, 5)) + ' y los compromisos hasta el ' + esc(fechaCorta(d.siguiente).slice(0, 5)) + ' (disponible diario <b style="color:var(--text)">~' + esc(fmtMoney(Math.round(d.porDia2), 'ARS')) + '</b>).') + '</div>' +
       lin2.join('') + '<div class="dfila total"><span class="n"><b>Te queda para gastar</b></span><span class="mono">' + esc(money(d.libre2)) + '</span></div>' +
       '<div class="mut small" style="margin-top:10px">Incluye tus fijos del mes. No incluye gastos de efectivo o débito que todavía no hiciste.</div>');
   }
@@ -1714,11 +1713,11 @@ function renderFlujo() {
     : '<div class="mut" style="font-weight:400">No hay movimientos previstos en este período.</div>';
   const horizonte = '<div class="seg" id="horiz" style="margin-bottom:12px">' + [30, 60, 90].map(n => '<button class="' + (FL.dias === n ? 'on' : '') + '" data-d="' + n + '">' + n + ' días</button>').join('') + '</div>';
   const tl = card('Qué viene en los próximos días', horizonte +
-    '<div class="tl cab"><span>Fecha</span><span>Qué</span><span class="mono">Monto</span><span class="mono sal">Saldo</span></div>' + fila('Hoy: lo que tenés en cuentas (pesos)', money(F.saldo), 'tlini') + filasTl +
-    (F.primerRojo ? '<div class="aviso" style="margin-top:12px">A partir del ' + esc(fechaCorta(F.primerRojo.fecha)) + ' tus cuentas en pesos quedan en rojo (' + esc(F.primerRojo.concepto) + '), si no entra plata antes.</div>' : ''));
+    '<div class="tl cab"><span>Fecha</span><span>Descripción</span><span class="mono">Monto</span><span class="mono sal">Saldo</span></div>' + fila('Hoy: lo que tenés en cuentas (pesos)', money(F.saldo), 'tlini') + filasTl +
+    '');
 
   const notas = [];
-  if (F.enDolares.length) notas.push('Las cuotas en dólares (' + F.enDolares.map(d => esc(d.nombre)).join(', ') + ') no están acá: salen de tus cuentas en dólares (tenés ' + esc(fmtMoney(F.saldoUSD, 'USD')) + ').');
+  if (F.enDolares.length) notas.push('No tiene en cuenta cuotas en USD');
   if (F.sinEstimar.length) notas.push('No pude estimar la cuota de ' + F.sinEstimar.map(esc).join(', ') + ' (está en UVA y todavía no cargaste ningún pago).');
   if (fijosActivos().some(v => v.Moneda === 'USD' && v.Movimiento === 'Gasto')) notas.push('Los fijos en dólares se pasan a pesos. ' + textoTC() + ' La tarjeta puede cobrar más por impuestos.');
   notas.push('No incluye gastos de efectivo o débito que todavía no hiciste. Cuanto más cargues, más preciso es.');
