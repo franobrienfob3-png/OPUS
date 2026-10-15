@@ -268,7 +268,14 @@ label.recl { display:flex; gap:8px; align-items:center; color:var(--text-2); cur
 .donutbox.chico .donut { width:160px; height:160px; }
 .donutbox.chico .donut .hole { inset:22px; }
 @media (max-width:1180px) { .donutbox.chico { grid-template-columns:1fr; justify-items:center; } .donutbox.chico .legend { width:100%; } }
-@media (max-width:900px) { .dgrid { grid-template-columns:1fr; } }
+@media (max-width:900px) { .dgrid { grid-template-columns:minmax(0,1fr); } }
+
+/* iPhone: el campo de fecha ignora el ancho y se sale del cuadro; se lo obliga a respetarlo */
+input[type="date"].in { -webkit-appearance:none; appearance:none; display:block; width:100%; min-width:0; max-width:100%; box-sizing:border-box; text-align:left; line-height:38px; }
+input[type="date"].in::-webkit-date-and-time-value { text-align:left; margin:0; min-height:1.2em; }
+input[type="date"].in::-webkit-calendar-picker-indicator { margin-left:auto; }
+label.f { min-width:0; }
+label.f > .in { max-width:100%; }
 
 /* Esqueleto mientras cargan los datos */
 .esq { background:linear-gradient(90deg, var(--surface) 0%, var(--surface-2) 50%, var(--surface) 100%); background-size:200% 100%; animation:esq 1.3s ease-in-out infinite; border-color:transparent; }
