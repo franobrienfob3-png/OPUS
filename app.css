@@ -191,8 +191,6 @@ label.recl { display:flex; gap:8px; align-items:center; color:var(--text-2); cur
 /* Celular: menú superior que cabe y importes que no se parten */
 @media (max-width:720px) {
   .top { gap:6px; }
-  .brand { gap:0; }
-  .word { display:none; }
   .tabs { min-width:0; overflow-x:auto; scrollbar-width:none; }
   .tabs::-webkit-scrollbar { display:none; }
   .tab { padding:0 8px; font-size:13.5px; }
