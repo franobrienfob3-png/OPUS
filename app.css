@@ -326,3 +326,11 @@ label.f > .in { max-width:100%; }
 .chkfila .chkin { width:130px; margin:0; text-align:right; }
 .chkfila .dif { width:104px; text-align:right; white-space:nowrap; }
 .chkfila .dif.ok { color:var(--muted); }
+
+/* Cashflow: Ingresos y Gastos que se abren para ver el detalle */
+details.desglose > summary { list-style:none; cursor:pointer; }
+details.desglose > summary::-webkit-details-marker { display:none; }
+details.desglose > summary .n::before { content:'▸'; display:inline-block; width:16px; color:var(--muted); font-size:12px; }
+details.desglose[open] > summary .n::before { content:'▾'; }
+details.desglose > summary:hover .n { color:var(--text); }
+.dfila.sub { padding-left:22px; font-size:13px; color:var(--text-2); border-top-style:dashed; }

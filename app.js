@@ -1684,7 +1684,7 @@ async function necesitaDatos() {
 
 // ---------- Flujo de caja ----------
 const PREFS = { proximoCobro: '', consumoCiclo: 0, tcManual: 0 };
-const FL = { dias: 60 };
+const FL = { dias: 60, abiertos: {} };
 
 const diasEntre = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000);
 const isoDe = d => d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
@@ -1789,6 +1789,15 @@ function renderFlujo() {
   const money = n => (n < 0 ? '− ' : '') + fmtMoney(Math.abs(n), 'ARS');
   const card = (t, html) => '<div class="card cuerpo-c"><h2 class="titulo-c">' + t + '</h2>' + html + '</div>';
   const fila = (a, b, cls) => '<div class="dfila ' + (cls || '') + '"><span class="n">' + a + '</span><span class="mono">' + b + '</span></div>';
+  const signoF = n => (n < 0 ? '− ' : '+ ') + fmtMoney(Math.abs(n), 'ARS');
+  // una sola línea por grupo; tocándola se abre el detalle (queda abierta o cerrada aunque se vuelva a dibujar)
+  const grupoF = (id, titulo, lista) => {
+    if (!lista.length) return '';
+    const total = lista.reduce((t, e) => t + e.monto, 0);
+    return '<details class="desglose" data-g="' + id + '"' + (FL.abiertos[id] ? ' open' : '') + '><summary><div class="dfila"><span class="n">' + titulo +
+      ' <span class="mut small">(' + lista.length + ')</span></span><span class="mono">' + esc(signoF(total)) + '</span></div></summary>' +
+      lista.map(e => fila(esc(e.concepto) + ' <span class="mut small">' + esc(fechaCorta(e.fecha).slice(0, 5)) + '</span>', esc(signoF(e.monto)), 'sub')).join('') + '</details>';
+  };
 
   const datos = card('Tus datos', '<div class="dgrid-db" style="gap:0 16px"><label class="f">Fecha cobro<input class="in" type="date" id="fcobro" value="' + esc(PREFS.proximoCobro) + '"></label>' +
     '<label class="f">' + 'Otros consumos sin cargar' + '<input class="in" id="fconsumo" inputmode="decimal" autocomplete="off" placeholder="0" value="' + (PREFS.consumoCiclo ? esc(String(PREFS.consumoCiclo).replace('.', ',')) : '') + '">' +
@@ -1799,9 +1808,7 @@ function renderFlujo() {
     hasta = card('Hasta que cobres', '<div class="mut" style="font-weight:400">Elegí arriba la fecha en que cobrás y te digo cuánto podés gastar hasta ese día.</div>');
   } else {
     const h = F.hasta, neg = h.libre < 0;
-    const lineas = [fila('Plata hoy en tus cuentas' + (VISTA_MON ? '' : ' (pesos)'), money(F.saldo))]
-      .concat(h.salidas.map(e => fila(esc(e.concepto) + ' <span class="mut small">' + esc(fechaCorta(e.fecha).slice(0, 5)) + '</span>', money(e.monto))))
-      .concat(h.entradas.map(e => fila(esc(e.concepto) + ' <span class="mut small">' + esc(fechaCorta(e.fecha).slice(0, 5)) + '</span>', money(e.monto))));
+    const lineas = [fila('Plata hoy en tus cuentas' + (VISTA_MON ? '' : ' (pesos)'), money(F.saldo)), grupoF('hasta-ing', 'Ingresos', h.entradas), grupoF('hasta-gas', 'Gastos', h.salidas)];
     hasta = card('Para llegar al cobro (' + esc(fechaCorta(h.cobro).slice(0, 5)) + ', en ' + h.dias + (h.dias === 1 ? ' día' : ' días') + ')',
       '<div class="gran ' + (neg ? 'bad' : '') + '">' + esc(money(h.libre)) + '</div>' +
       '<div class="mut" style="font-weight:400;margin:2px 0 14px">' + (neg ? 'No te alcanza con lo que tenés: te faltan ' + esc(fmtMoney(-h.libre, 'ARS')) + ' para cubrir todo hasta cobrar.' : 'Es lo que podés gastar hasta cobrar, <b style="color:var(--text)">~' + esc(fmtMoney(Math.round(h.porDia), 'ARS')) + ' por día</b>, después de pagar lo que ya tenés comprometido.') + '</div>' +
@@ -1813,8 +1820,7 @@ function renderFlujo() {
   if (F.hasta) {
     const h = F.hasta, d = h.despues, neg2 = d.libre2 < 0;
     const signo = n => (n < 0 ? '− ' : '+ ') + fmtMoney(Math.abs(n), 'ARS');
-    const lin2 = [fila('Lo que te queda al llegar al cobro', money(h.libre))]
-      .concat(d.post.map(e => fila(esc(e.concepto) + ' <span class="mut small">' + esc(fechaCorta(e.fecha).slice(0, 5)) + '</span>', esc(signo(e.monto)))));
+    const lin2 = [fila('Lo que te queda al llegar al cobro', money(h.libre)), grupoF('post-ing', 'Ingresos', d.post.filter(e => e.monto > 0)), grupoF('post-gas', 'Gastos', d.post.filter(e => e.monto < 0))];
     desp = card('Resto post-cobro',
       '<div class="gran ' + (neg2 ? 'bad' : '') + '">' + esc(money(d.libre2)) + '</div>' +
       '<div class="mut" style="font-weight:400;margin:2px 0 14px">' + (neg2 ? 'Saldo tras el cobro del ' + esc(fechaCorta(h.cobro).slice(0, 5)) + ' y los compromisos hasta el ' + esc(fechaCorta(d.siguiente).slice(0, 5)) + ': faltan ' + esc(fmtMoney(-d.libre2, 'ARS')) + '.' :
@@ -1843,6 +1849,7 @@ function renderFlujo() {
   // mientras escribís el año (2 → 20 → 202 → 2026) el navegador ya da fechas "válidas": se espera a que el año sea real
   $('fcobro').onchange = e => { const v = e.target.value; if (v === '' || (v >= '2020-01-01' && v <= '2100-12-31')) guardarPref({ proximoCobro: v }); };
   $('fconsumo').onchange = e => { const n = numAR(e.target.value); guardarPref({ consumoCiclo: isFinite(n) && n >= 0 ? n : 0 }); };
+  document.querySelectorAll('details.desglose').forEach(d => d.addEventListener('toggle', () => { FL.abiertos[d.dataset.g] = d.open; }));
   $('horiz').querySelectorAll('button').forEach(b => b.onclick = () => { FL.dias = Number(b.dataset.d); renderFlujo(); });
 }
 
