@@ -248,6 +248,7 @@ function renderPage() {
     encabezado + avisosHtml() + revisionesHtml() +
     (enReglas ? '' : '<div class="pills">' + pills + '</div>') +
     (S.id === 'fijos' && !enReglas ? resumenFijosHtml() : '') +
+    (S.id === 'presupuesto' && !enReglas ? '<div class="mut small" style="max-width:640px">Los cambios valen desde este mes: los meses anteriores conservan el presupuesto que tenían.</div>' : '') +
     '<div class="toolbar"><div class="search"><span class="lupa"></span><input id="q" placeholder="Buscar…" value="' + esc(S.q) + '"></div>' +
     '<button class="btn primary" id="nuevo">+ Agregar</button>' +
     '<span class="count">' + filas.length + ' de ' + (d.filas || []).length + ' en ' + esc(m.titulo) + '</span></div>' + cuerpo;
@@ -1454,7 +1455,18 @@ function renderDashboard() {
   const costoDeuda = naturaleza.filter(x => x.n === 'Deuda').reduce((s, x) => s + x.total, 0);
 
   // presupuesto
-  const pres = S.data.presupuesto.filas.map(f => ({ sub: f.v.Subcategoria, tope: (Number(f.v.Presupuesto) || 0) * nMeses })).filter(p => p.tope > 0)
+  // cada mes se mide con el presupuesto que tenía en ese momento (si lo cambiás hoy, los meses pasados no se modifican)
+  const mesesPer = Array.from(new Set(base.map(m => m.fecha.slice(0, 7))));
+  if (!mesesPer.length) mesesPer.push(esMes ? per : DB.hoy.slice(0, 7));
+  const presDeMes = ym => {
+    const h = (DB.presHist || []).filter(x => x.hasta >= ym)[0];   // el historial viene ordenado: vale el primer registro que llega hasta ese mes
+    if (h) return h.valores;
+    const o = {};
+    S.data.presupuesto.filas.forEach(f => { o[f.v.Subcategoria] = Number(f.v.Presupuesto) || 0; });
+    return o;
+  };
+  const subsPres = Array.from(new Set(S.data.presupuesto.filas.map(f => f.v.Subcategoria).concat(...(DB.presHist || []).map(h => Object.keys(h.valores)))));
+  const pres = subsPres.map(sub => ({ sub, tope: mesesPer.reduce((t, ym) => t + (presDeMes(ym)[sub] || 0), 0) })).filter(p => p.tope > 0)
     .map(p => { const real = gARS.filter(m => m.subcategoria === p.sub).reduce((s, m) => s + m.monto, 0); return Object.assign(p, { real, pct: porc(real, p.tope) }); })
     .sort((a, b) => b.pct - a.pct);
   const presTope = pres.reduce((s, p) => s + p.tope, 0), presReal = pres.reduce((s, p) => s + p.real, 0);
@@ -1629,7 +1641,7 @@ function aplicarTodo(r) {
   if (M.periodo !== 'todo' && M.periodo !== 'anio' && meses.indexOf(M.periodo) < 0) M.periodo = meses[0] || 'todo';
   D.lista = r.deudas; D.hoy = r.hoy;
   R.lista = r.resumenes; R.movs = r.movimientos;
-  DB.movs = r.movimientos; DB.deudas = r.deudas; DB.hoy = r.hoy || hoyLocal(); DB.res = r.resumenes;
+  DB.movs = r.movimientos; DB.deudas = r.deudas; DB.hoy = r.hoy || hoyLocal(); DB.res = r.resumenes; DB.presHist = r.presHist || [];
   const mu = mesesDe(DB.movs.filter(x => x.tipo === 'Gasto' || x.tipo === 'Ingreso'));
   if (DB.periodo !== 'todo' && DB.periodo !== 'anio' && mu.indexOf(DB.periodo) < 0) DB.periodo = mu[0] || 'todo';
   C.recientes = r.cargar.recientes; C.pendientes = r.cargar.pendientes;
