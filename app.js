@@ -291,7 +291,7 @@ function revisionesHtml() {
       (r.fila ? '<button class="mini" data-ir="' + i + '">Abrir</button>' : '') + '</li>';
   }).join('');
   return '<details class="card rev" ' + (S.rev.length <= 4 ? 'open' : '') + '><summary><span class="n">' + S.rev.length +
-    '</span> cosas para revisar en tus datos</summary><ul>' + items + '</ul></details>';
+    '</span> ' + (S.rev.length === 1 ? 'cosa para revisar' : 'cosas para revisar') + ' en tus datos</summary><ul>' + items + '</ul></details>';
 }
 
 function irA(i) {
