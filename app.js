@@ -129,7 +129,7 @@ async function llamarCore(fn, args) {
 }
 
 const MODIFICADORES = ['guardarFila', 'cambiarEstado', 'eliminarFila', 'aplicarCorreccion', 'confirmarImportacion',
-  'registrarMovimiento', 'actualizarMovimiento', 'editarMovimiento', 'eliminarMovimiento', 'guardarPresupuestoMes', 'borrarPresupuestoMes'];
+  'registrarMovimiento', 'actualizarMovimiento', 'editarMovimiento', 'eliminarMovimiento', 'guardarPresupuestoMes', 'borrarPresupuestoMes', 'ajustarSaldos'];
 
 async function llamar(fn, ...args) {
   try {
@@ -1520,8 +1520,9 @@ function renderDashboard() {
       '<div style="margin-top:14px">' + pres.map(p => '<div class="dgr"><div class="dfila"><span class="n">' + esc(p.sub) + '</span><span class="mono ' + (p.pct > 100 ? 'bad' : 'mut') + '">' + p.pct + '%</span><span class="mono">' + esc(fmtMoney(p.real, 'ARS')) + ' / ' + esc(fmtMoney(p.tope, 'ARS')) + '</span></div>' + barra(p.pct, p.pct > 100) + '</div>').join('') + '</div>'
     : '<div class="mut" style="font-weight:400">No hay presupuestos cargados. Definilos en DDMM → Presupuesto.</div>';
 
-  const cuentasHtml = sal.lista.map(c => fila(esc(c.nombre) + (c.nombre.slice(-3) === c.moneda ? '' : ' <span class="mut small">' + esc(c.moneda) + '</span>'), (c.saldo < 0 ? '− ' : '') + esc(fmtMoney(Math.abs(c.saldo), c.moneda)), '')).join('') +
+  const cuentasLista = sal.lista.map(c => fila(esc(c.nombre) + (c.nombre.slice(-3) === c.moneda ? '' : ' <span class="mut small">' + esc(c.moneda) + '</span>'), (c.saldo < 0 ? '− ' : '') + esc(fmtMoney(Math.abs(c.saldo), c.moneda)), '')).join('') +
     '<div class="dfila total"><span class="n"><b>Total en cuentas</b></span><span class="mono">' + esc(dosMon(sal.total.ARS, sal.total.USD)) + '</span></div>';
+  const cuentasHtml = CHK.abierto ? chequeoHtml(sal.lista) : cuentasLista + '<button class="mini" id="chkabrir" style="margin-top:12px">Chequear saldos</button>';
 
   const patHtml = fila('En cuentas', esc(dosMon(sal.total.ARS, sal.total.USD))) +
     fila('Te deben', esc(dosMon(cobrar.ARS, cobrar.USD))) +
@@ -1615,6 +1616,7 @@ function renderDashboard() {
     '</div>' +
     '';
   $('dbper').onchange = e => { DB.periodo = e.target.value; renderDashboard(); };
+  enlazarChk();
 }
 
 // ---------- Datos compartidos entre solapas ----------
@@ -2115,6 +2117,56 @@ function enlazarPresMes() {
     cambiado(async () => { await llamar('guardarPresupuestoMes', PM.mes, valores); toast('Presupuesto de ' + nombreMes(PM.mes) + ' guardado'); });
   };
   if ($('pmvolver')) $('pmvolver').onclick = () => cambiado(async () => { await llamar('borrarPresupuestoMes', PM.mes); toast('Volvió al presupuesto original'); });
+}
+
+// ---------- Chequeo de saldos contra el banco ----------
+const CHK = { abierto: false };
+
+function chequeoHtml(lista) {
+  const filas = lista.filter(c => c.estado !== 'Inactivo' || c.mov);
+  return '<div class="mut small" style="margin-bottom:8px">Escribí lo que dice cada banco. Donde no coincida, se crea un ajuste por la diferencia.</div>' +
+    filas.map(c => '<div class="chkfila" data-cuenta="' + esc(c.nombre) + '" data-calc="' + c.saldo + '" data-mon="' + esc(c.moneda) + '"><span class="n">' + esc(c.nombre) +
+      '</span><span class="mono mut calc" title="Lo que calcula el sistema">' + esc((c.saldo < 0 ? '− ' : '') + fmtMoneyRaw(Math.abs(c.saldo), c.moneda)) + '</span>' +
+      '<input class="in chkin" inputmode="decimal" autocomplete="off" placeholder="Según el banco"><span class="mono dif">—</span></div>').join('') +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn primary" id="chkok" disabled>Crear ajustes</button><button class="btn" id="chkno">Cancelar</button></div>';
+}
+
+function enlazarChk() {
+  if ($('chkabrir')) $('chkabrir').onclick = () => { CHK.abierto = true; renderDashboard(); };
+  if (!$('chkok')) return;
+  $('chkno').onclick = () => { CHK.abierto = false; renderDashboard(); };
+  const filas = Array.from(document.querySelectorAll('.chkfila'));
+  const leer = () => filas.map(f => {
+    const v = f.querySelector('.chkin').value, n = numAR(v);
+    if (String(v).trim() === '' || !isFinite(n)) return null;
+    return { cuenta: f.dataset.cuenta, mon: f.dataset.mon, dif: Math.round((n - Number(f.dataset.calc)) * 100) / 100 };
+  });
+  const actualizar = () => {
+    let cuantos = 0;
+    leer().forEach((p, i) => {
+      const cel = filas[i].querySelector('.dif');
+      if (!p) { cel.textContent = '—'; cel.className = 'mono dif'; return; }
+      if (Math.abs(p.dif) < 0.005) { cel.textContent = '✓ coincide'; cel.className = 'mono dif ok'; return; }
+      cel.textContent = (p.dif > 0 ? '+ ' : '− ') + fmtMoneyRaw(Math.abs(p.dif), p.mon);
+      cel.className = 'mono dif ' + (p.dif < 0 ? 'neg' : '');
+      cuantos++;
+    });
+    $('chkok').disabled = !cuantos;
+    $('chkok').textContent = cuantos ? 'Crear ' + cuantos + (cuantos === 1 ? ' ajuste' : ' ajustes') : 'Crear ajustes';
+  };
+  filas.forEach(f => { f.querySelector('.chkin').oninput = actualizar; });
+  $('chkok').onclick = async () => {
+    const items = leer().filter(p => p && Math.abs(p.dif) >= 0.005).map(p => ({ cuenta: p.cuenta, monto: p.dif }));
+    if (!items.length) return;
+    $('chkok').disabled = true;
+    try {
+      await llamar('ajustarSaldos', items);
+      CHK.abierto = false;
+      aplicarTodo(await traerTodo(true));
+      renderDashboard();
+      toast(items.length + (items.length === 1 ? ' ajuste creado' : ' ajustes creados'));
+    } catch (e) { toast((e && e.message) || 'No se pudieron crear los ajustes'); $('chkok').disabled = false; }
+  };
 }
 
 // ---------- inicio ----------
