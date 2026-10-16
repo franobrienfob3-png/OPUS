@@ -129,7 +129,7 @@ async function llamarCore(fn, args) {
 }
 
 const MODIFICADORES = ['guardarFila', 'cambiarEstado', 'eliminarFila', 'aplicarCorreccion', 'confirmarImportacion',
-  'registrarMovimiento', 'actualizarMovimiento', 'editarMovimiento', 'eliminarMovimiento'];
+  'registrarMovimiento', 'actualizarMovimiento', 'editarMovimiento', 'eliminarMovimiento', 'guardarPresupuestoMes', 'borrarPresupuestoMes'];
 
 async function llamar(fn, ...args) {
   try {
@@ -249,6 +249,7 @@ function renderPage() {
     (enReglas ? '' : '<div class="pills">' + pills + '</div>') +
     (S.id === 'fijos' && !enReglas ? resumenFijosHtml() : '') +
     (S.id === 'presupuesto' && !enReglas ? '<div class="mut small" style="max-width:640px">Los cambios valen desde este mes: los meses anteriores conservan el presupuesto que tenían.</div>' : '') +
+    (S.id === 'presupuesto' && !enReglas ? presMesHtml() : '') +
     '<div class="toolbar"><div class="search"><span class="lupa"></span><input id="q" placeholder="Buscar…" value="' + esc(S.q) + '"></div>' +
     '<button class="btn primary" id="nuevo">+ Agregar</button>' +
     '<span class="count">' + filas.length + ' de ' + (d.filas || []).length + ' en ' + esc(m.titulo) + '</span></div>' + cuerpo;
@@ -262,6 +263,7 @@ function renderPage() {
   $('page').querySelectorAll('[data-fix]').forEach(b => b.onclick = () => corregir(Number(b.dataset.fix)));
   $('page').querySelectorAll('[data-ir]').forEach(b => b.onclick = () => irA(Number(b.dataset.ir)));
   enlazarTC();
+  enlazarPresMes();
   const cs = document.createElement('button');
   cs.className = 'btn'; cs.style.marginTop = '24px'; cs.textContent = 'Cerrar sesión'; cs.onclick = salir;
   $('page').appendChild(cs);
@@ -1458,14 +1460,8 @@ function renderDashboard() {
   // cada mes se mide con el presupuesto que tenía en ese momento (si lo cambiás hoy, los meses pasados no se modifican)
   const mesesPer = Array.from(new Set(base.map(m => m.fecha.slice(0, 7))));
   if (!mesesPer.length) mesesPer.push(esMes ? per : DB.hoy.slice(0, 7));
-  const presDeMes = ym => {
-    const h = (DB.presHist || []).filter(x => x.hasta >= ym)[0];   // el historial viene ordenado: vale el primer registro que llega hasta ese mes
-    if (h) return h.valores;
-    const o = {};
-    S.data.presupuesto.filas.forEach(f => { o[f.v.Subcategoria] = Number(f.v.Presupuesto) || 0; });
-    return o;
-  };
-  const subsPres = Array.from(new Set(S.data.presupuesto.filas.map(f => f.v.Subcategoria).concat(...(DB.presHist || []).map(h => Object.keys(h.valores)))));
+  const presDeMes = presupuestoDeMes;
+  const subsPres = Array.from(new Set(S.data.presupuesto.filas.map(f => f.v.Subcategoria).concat(...(DB.presHist || []).map(h => Object.keys(h.valores)), ...Object.keys(DB.presMes || {}).map(k => Object.keys(DB.presMes[k])))));
   const pres = subsPres.map(sub => ({ sub, tope: mesesPer.reduce((t, ym) => t + (presDeMes(ym)[sub] || 0), 0) })).filter(p => p.tope > 0)
     .map(p => { const real = gARS.filter(m => m.subcategoria === p.sub).reduce((s, m) => s + m.monto, 0); return Object.assign(p, { real, pct: porc(real, p.tope) }); })
     .sort((a, b) => b.pct - a.pct);
@@ -1641,7 +1637,7 @@ function aplicarTodo(r) {
   if (M.periodo !== 'todo' && M.periodo !== 'anio' && meses.indexOf(M.periodo) < 0) M.periodo = meses[0] || 'todo';
   D.lista = r.deudas; D.hoy = r.hoy;
   R.lista = r.resumenes; R.movs = r.movimientos;
-  DB.movs = r.movimientos; DB.deudas = r.deudas; DB.hoy = r.hoy || hoyLocal(); DB.res = r.resumenes; DB.presHist = r.presHist || [];
+  DB.movs = r.movimientos; DB.deudas = r.deudas; DB.hoy = r.hoy || hoyLocal(); DB.res = r.resumenes; DB.presHist = r.presHist || []; DB.presMes = r.presMes || {};
   const mu = mesesDe(DB.movs.filter(x => x.tipo === 'Gasto' || x.tipo === 'Ingreso'));
   if (DB.periodo !== 'todo' && DB.periodo !== 'anio' && mu.indexOf(DB.periodo) < 0) DB.periodo = mu[0] || 'todo';
   C.recientes = r.cargar.recientes; C.pendientes = r.cargar.pendientes;
@@ -2063,6 +2059,63 @@ const ORDEN_SOLAPAS = ['dashboard', 'flujo', 'cargar', 'movs', 'deudas', 'resume
     window.scrollTo(0, 0);
   }, { passive: true });
 })();
+
+// ---------- Presupuesto de meses anteriores ----------
+const PM = { mes: '' };
+
+/** El presupuesto con el que se mide un mes: el corregido a mano, si existe; si no, el del historial; si no, el actual. */
+function presupuestoDeMes(ym) {
+  const ov = (DB.presMes || {})[ym];
+  if (ov) return ov;
+  const h = (DB.presHist || []).filter(x => x.hasta >= ym)[0];   // el historial viene ordenado: vale el primer registro que llega hasta ese mes
+  if (h) return h.valores;
+  const o = {};
+  S.data.presupuesto.filas.forEach(f => { o[f.v.Subcategoria] = Number(f.v.Presupuesto) || 0; });
+  return o;
+}
+
+function presMesHtml() {
+  if (DB.presHist === undefined || DB.presMes === undefined) {   // todavía no llegaron los datos: se piden y se vuelve a dibujar
+    traerTodo().then(r => { aplicarTodo(r); if (S.vista === 'maestros' && S.id === 'presupuesto') renderPage(); }).catch(() => { /* sin historial: queda el presupuesto actual */ });
+    return '';
+  }
+  const meses = [];
+  let ym = mesAnterior((DB.hoy || hoyLocal()).slice(0, 7));
+  for (let i = 0; i < 12; i++) { meses.push(ym); ym = mesAnterior(ym); }
+  const corregido = !!(DB.presMes || {})[PM.mes];
+  let cuerpo = '';
+  if (PM.mes) {
+    const vig = presupuestoDeMes(PM.mes);
+    const subs = Array.from(new Set(S.data.presupuesto.filas.map(f => f.v.Subcategoria).concat(Object.keys(vig))));
+    cuerpo = '<div style="margin-top:12px">' + subs.map(sub => '<label class="dfila" style="cursor:default"><span class="n">' + esc(sub) + '</span><input class="in" style="width:140px;margin:0;text-align:right" inputmode="decimal" autocomplete="off" data-pm="' + esc(sub) + '" value="' + esc(String(vig[sub] || 0).replace('.', ',')) + '"></label>').join('') + '</div>' +
+      '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap"><button class="btn primary" id="pmguardar">Guardar ' + esc(nombreMes(PM.mes)) + '</button>' +
+      (corregido ? '<button class="btn" id="pmvolver">Volver al original</button>' : '') + '</div>' +
+      (corregido ? '<div class="mut small" style="margin-top:8px">Este mes está corregido a mano.</div>' : '');
+  }
+  return '<div class="card cuerpo-c" style="max-width:640px"><h2 class="titulo-c">Presupuesto de un mes anterior</h2>' +
+    '<select class="in" id="pmmes" style="margin:0"><option value="">Elegí un mes</option>' + meses.map(m => op(m, PM.mes, nombreMes(m) + ((DB.presMes || {})[m] ? ' · corregido' : ''))).join('') + '</select>' + cuerpo + '</div>';
+}
+
+function enlazarPresMes() {
+  if ($('pmmes')) $('pmmes').onchange = e => { PM.mes = e.target.value; renderPage(); };
+  const cambiado = async (accion) => {
+    try {
+      await accion();
+      aplicarTodo(await traerTodo(true));
+      renderPage();
+    } catch (e) { toast((e && e.message) || 'No se pudo guardar'); }
+  };
+  if ($('pmguardar')) $('pmguardar').onclick = () => {
+    const vig = presupuestoDeMes(PM.mes), valores = {};
+    document.querySelectorAll('[data-pm]').forEach(i => {
+      const n = numAR(i.value);
+      if (!isFinite(n) || n !== (vig[i.dataset.pm] || 0)) valores[i.dataset.pm] = isFinite(n) ? n : i.value;   // se envía solo lo que cambió (o lo que no se entiende, para que avise)
+    });
+    if (!Object.keys(valores).length) { toast('No cambiaste nada'); return; }
+    cambiado(async () => { await llamar('guardarPresupuestoMes', PM.mes, valores); toast('Presupuesto de ' + nombreMes(PM.mes) + ' guardado'); });
+  };
+  if ($('pmvolver')) $('pmvolver').onclick = () => cambiado(async () => { await llamar('borrarPresupuestoMes', PM.mes); toast('Volvió al presupuesto original'); });
+}
 
 // ---------- inicio ----------
 traerTodo().catch(() => { /* si falla, cada solapa lo vuelve a pedir */ });
