@@ -334,3 +334,6 @@ details.desglose > summary .n::before { content:'▸'; display:inline-block; wid
 details.desglose[open] > summary .n::before { content:'▾'; }
 details.desglose > summary:hover .n { color:var(--text); }
 .dfila.sub { padding-left:22px; font-size:13px; color:var(--text-2); border-top-style:dashed; }
+
+/* Datos que no se pudieron actualizar */
+.aviso-viejo { background:rgba(224,168,0,.12); border:1px solid rgba(224,168,0,.45); color:var(--text); border-radius:10px; padding:10px 14px; margin-bottom:14px; font-size:13px; display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; }

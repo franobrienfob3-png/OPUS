@@ -87,13 +87,18 @@ function salir() {
 
 async function enviar(fn, args) {
   let resp;
+  const corte = new AbortController();
+  const reloj = setTimeout(() => corte.abort(), 45000);
   try {
     resp = await fetch(CFG.apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify(SESION ? { sesion: SESION, fn: fn, args: args } : { token: TOKEN, fn: fn, args: args }),
+      signal: corte.signal,
     });
-  } catch (e) { throw new Error('No se pudo conectar con el servidor. Revisá tu conexión.'); }
+  } catch (e) {
+    throw new Error(e && e.name === 'AbortError' ? 'El servidor tardó demasiado en responder.' : 'No se pudo conectar con el servidor. Revisá tu conexión.');
+  } finally { clearTimeout(reloj); }
   let j;
   try { j = await resp.json(); } catch (e) { throw new Error('El servidor respondió algo inesperado. Probá de nuevo en un momento.'); }
   if (j.code === 'AUTH') { const err = new Error(j.error); err.auth = true; throw err; }
@@ -1625,11 +1630,25 @@ function renderDashboard() {
 const K = { ts: 0, p: null, h: null };
 const TITULOS = { dashboard: 'Dashboard', flujo: 'Cashflow', cargar: 'Cargar', movs: 'Movimientos', deudas: 'Deudas', resumenes: 'Resúmenes' };
 
+/** Pide algo al servidor y, si falla por un corte pasajero (Google, conexión, demora), lo vuelve a intentar antes de rendirse. */
+async function pedirConReintentos(fn, args, intentos) {
+  let ultimo;
+  for (let i = 0; i < intentos; i++) {
+    try { return await llamarCore(fn, args); }
+    catch (e) {
+      if (e && e.auth) throw e;
+      ultimo = e;
+      if (i < intentos - 1) await new Promise(r => setTimeout(r, 1500 * (i + 1)));
+    }
+  }
+  throw ultimo;
+}
+
 function traerTodo(forzar) {
   if (!forzar && K.p) return K.p;
-  const p = llamarCore('cargarTodo', []);
+  const p = pedirConReintentos('cargarTodo', [], 3);
   K.p = p; K.ts = Date.now();
-  p.catch(() => { if (K.p === p) { K.p = null; K.ts = 0; } });
+  p.then(r => { K.ultimo = r; K.ultimoTs = Date.now(); }, () => { if (K.p === p) { K.p = null; K.ts = 0; } });
   return p;
 }
 
@@ -1674,12 +1693,24 @@ function esqueleto(vista) {
 async function necesitaDatos() {
   const vista = S.vista;
   $('page').innerHTML = esqueleto(vista);
+  let fallo = null;
   try { aplicarTodo(await traerTodo()); }
-  catch (e) {
-    toast((e && e.message) || 'No se pudieron cargar los datos');
-    aplicarTodo({ movimientos: [], deudas: [], hoy: '', resumenes: [], cargar: { recientes: [], pendientes: [] } });
+  catch (e) { fallo = e; }
+  if (S.vista !== vista) return;
+  if (!fallo) { render(); return; }
+  const motivo = (fallo && fallo.message) || 'No se pudieron cargar los datos';
+  if (K.ultimo) {
+    // hay una copia de hace un rato: se muestra eso, avisando que no está al día
+    aplicarTodo(K.ultimo);
+    render();
+    const min = Math.max(1, Math.round((Date.now() - K.ultimoTs) / 60000));
+    $('page').insertAdjacentHTML('afterbegin', '<div class="aviso-viejo">No pude actualizar (' + esc(motivo) + ') Estás viendo los datos de hace ' + min + (min === 1 ? ' minuto' : ' minutos') + '. <button class="mini" id="reintentar">Reintentar</button></div>');
+  } else {
+    $('page').innerHTML = '<div class="card" style="max-width:560px"><h2 class="titulo-c">No pude cargar tus datos</h2><p class="mut">' + esc(motivo) +
+      '</p><p class="mut small">No se perdió nada: está todo guardado en tu planilla. Es un problema para leerla en este momento.</p><button class="btn primary" id="reintentar">Reintentar</button></div>';
   }
-  if (S.vista === vista) render();
+  const b = $('reintentar');
+  if (b) b.onclick = () => { K.p = null; necesitaDatos(); };
 }
 
 // ---------- Flujo de caja ----------
