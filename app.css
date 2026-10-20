@@ -390,3 +390,5 @@ body.privado input[inputmode="decimal"]:not(:focus) { filter:blur(6px); }
 :root[data-tema="claro"] .overlay { background:rgba(26,25,24,.4); }
 :root[data-tema="claro"] .dd-panel { box-shadow:0 12px 32px rgba(26,25,24,.18); }
 :root[data-tema="claro"] .aviso-viejo { background:rgba(224,168,0,.16); border-color:rgba(176,124,0,.5); }
+.bien { color:#2e9d5b; }
+:root[data-tema="claro"] .bien { color:#1f7a45; }

@@ -134,7 +134,7 @@ async function llamarCore(fn, args) {
 }
 
 const MODIFICADORES = ['guardarFila', 'cambiarEstado', 'eliminarFila', 'aplicarCorreccion', 'confirmarImportacion',
-  'registrarMovimiento', 'actualizarMovimiento', 'editarMovimiento', 'eliminarMovimiento', 'guardarPresupuestoMes', 'borrarPresupuestoMes', 'ajustarSaldos'];
+  'registrarMovimiento', 'actualizarMovimiento', 'editarMovimiento', 'eliminarMovimiento', 'guardarPresupuestoMes', 'borrarPresupuestoMes', 'ajustarSaldos', 'guardarInversion', 'venderInversion', 'eliminarInversion'];
 
 async function llamar(fn, ...args) {
   try {
@@ -230,7 +230,7 @@ function celda(m, c, v, f) {
 // ---------- vista ----------
 function renderTabs() {
   const activa = (S.vista === 'reglas' || S.vista === 'importar') ? 'resumenes' : S.vista;
-  $('tabs').innerHTML = [['dashboard', 'Dashboard'], ['flujo', 'Cashflow'], ['cargar', 'Cargar'], ['movs', 'Movimientos'], ['deudas', 'Deudas'], ['resumenes', 'Resúmenes'], ['maestros', 'DDMM']].map(t =>
+  $('tabs').innerHTML = [['dashboard', 'Dashboard'], ['flujo', 'Cashflow'], ['cargar', 'Cargar'], ['movs', 'Movimientos'], ['deudas', 'Deudas'], ['inversiones', 'Inversiones'], ['resumenes', 'Resúmenes'], ['maestros', 'DDMM']].map(t =>
     '<button class="tab ' + (activa === t[0] ? 'on' : '') + '" data-v="' + t[0] + '">' + t[1] + '</button>').join('');
   $('tabs').querySelectorAll('.tab').forEach(b => b.onclick = () => irVista(b.dataset.v));
   actualizarCabecera();
@@ -242,7 +242,7 @@ function irVista(v) {
   S.vista = v; S.q = ''; store.set('vista', v);
   if (v === 'resumenes') R.sel = '';
   if (v === 'cargar') reiniciarCarga(true);
-  if (K.p && Date.now() - K.ts > 90000 && ['dashboard', 'flujo', 'movs', 'deudas', 'resumenes', 'cargar'].indexOf(v) >= 0) refrescarSilencioso();
+  if (K.p && Date.now() - K.ts > 90000 && ['dashboard', 'flujo', 'movs', 'deudas', 'inversiones', 'resumenes', 'cargar'].indexOf(v) >= 0) refrescarSilencioso();
   if (v === 'maestros' && S.id === 'reglas') S.id = S.schemas.filter(s => s.id !== 'reglas')[0].id;
   if (v === 'reglas') S.id = 'reglas';
   cerrar(); renderTabs(); render();
@@ -252,6 +252,7 @@ function render() {
   if (S.vista === 'importar') renderImportar();
   else if (S.vista === 'movs') renderMovs();
   else if (S.vista === 'deudas') renderDeudas();
+  else if (S.vista === 'inversiones') renderInversiones();
   else if (S.vista === 'cargar') renderCargar();
   else if (S.vista === 'resumenes') renderResumenes();
   else if (S.vista === 'dashboard') renderDashboard();
@@ -1109,6 +1110,317 @@ function renderDeudas() {
   });
 }
 
+// ---------- Inversiones ----------
+const INV = { lista: null, valores: {}, error: '', avisos: [], ts: 0, auto: null, refrescando: false, form: null, venta: null };
+const INV_TIPOS = ['Plazo fijo', 'Fondo común', 'Acción', 'CEDEAR', 'Bono', 'Cripto', 'Otro'];
+const INV_AUTO_MS = 10 * 60 * 1000;
+
+const invActiva = i => i.estado !== 'Vendida';
+const invConPrecio = i => ['Fondo común', 'Acción', 'CEDEAR', 'Bono', 'Cripto'].indexOf(i.tipo) >= 0;
+
+/** Lo que llega del servidor, conservando los precios de mercado si se pidieron hace menos de 10 minutos. */
+function aplicarInversiones(r) {
+  if (!r) return;
+  INV.lista = r.lista || []; INV.valores = r.valores || {}; INV.error = r.error || '';
+  if (INV.auto && Date.now() - INV.auto.ts < INV_AUTO_MS) {
+    INV.lista.forEach(i => { const a = INV.auto.valores[i.id]; if (a && invActiva(i) && INV.valores[i.id]) INV.valores[i.id] = a; });
+  }
+}
+
+/** Invertido y valor de hoy por moneda, de las inversiones activas. */
+function invTotales() {
+  const t = { ARS: { invertido: 0, valor: 0, n: 0 }, USD: { invertido: 0, valor: 0, n: 0 } };
+  (INV.lista || []).filter(invActiva).forEach(i => {
+    const v = INV.valores[i.id], m = i.moneda === 'USD' ? 'USD' : 'ARS';
+    if (!v) return;
+    t[m].invertido += i.costo; t[m].valor += v.valor; t[m].n++;
+  });
+  return t;
+}
+
+function haceCuanto(ms) {
+  const min = Math.max(0, Math.round((Date.now() - ms) / 60000));
+  if (min < 2) return 'recién';
+  if (min < 60) return 'hace ' + min + ' min';
+  const h = Math.round(min / 60);
+  if (h < 24) return 'hace ' + h + (h === 1 ? ' hora' : ' horas');
+  const d = Math.round(h / 24);
+  return 'hace ' + d + (d === 1 ? ' día' : ' días');
+}
+
+/** Dólares ahorrados: compras y ventas de dólares hechas como transferencias entre tus cuentas, a precio promedio. */
+function invDolares() {
+  const mon = {};
+  S.data.cuentas.filas.forEach(f => { mon[f.v.Nombre] = f.v.Moneda; });
+  const ts = (DB.movs || []).filter(m => m.tipo === 'Transferencia' && m.afecta === 'Si' && mon[m.cuenta] && mon[m.destino] && mon[m.cuenta] !== mon[m.destino] &&
+    ['ARS', 'USD'].indexOf(mon[m.cuenta]) >= 0 && ['ARS', 'USD'].indexOf(mon[m.destino]) >= 0)
+    .sort((a, b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0);
+  let usd = 0, costo = 0, realizado = 0, compras = 0, ventas = 0;
+  ts.forEach(m => {
+    const otro = Number(m.montoDestino);
+    if (!(m.monto > 0) || !(otro > 0)) return;
+    if (mon[m.cuenta] === 'ARS') { usd += otro; costo += m.monto; compras++; return; }
+    const prom = usd > 0 ? costo / usd : 0, sale = Math.min(m.monto, usd);
+    realizado += otro * (sale / m.monto) - prom * sale;
+    usd -= sale; costo -= prom * sale; ventas++;
+  });
+  if (!compras) return null;
+  usd = Math.max(0, usd); costo = Math.max(0, costo);
+  const tc = tcEfectivo(), valor = usd * tc;
+  return { usd, costo, prom: usd > 0 ? costo / usd : 0, tc, valor, resultado: tc ? valor - costo : 0, realizado, compras, ventas };
+}
+
+function signoMon(n, mon) { return (n < 0 ? '− ' : n > 0 ? '+ ' : '') + fmtMoney(Math.abs(n), mon); }
+
+function fuenteTxt(v) {
+  if (v.fuente === 'calculado') return 'valor calculado con la tasa';
+  if (v.fuente === 'auto') return 'precio de mercado · ' + (v.actualizado ? haceCuanto(v.actualizado) : 'ahora');
+  if (v.fuente === 'ultimo') return 'último precio conocido' + (v.actualizado ? ' · ' + haceCuanto(v.actualizado) : '');
+  if (v.fuente === 'manual') return 'valor cargado a mano' + (v.actualizado ? ' · ' + fechaCorta(v.actualizado) : '');
+  return 'sin precio: se muestra lo invertido';
+}
+
+function tarjetaInversion(i) {
+  const v = INV.valores[i.id] || { valor: i.costo, fuente: 'costo' };
+  const res = v.valor - i.costo, pct = i.costo ? res / i.costo * 100 : 0;
+  const detalle = i.tipo === 'Plazo fijo'
+    ? 'TNA ' + fmtNum(i.tna) + '% · vence el ' + fechaCorta(i.vencimiento) + (v.diasRestantes != null ? (v.diasRestantes < 0 ? ' (ya venció)' : v.diasRestantes === 0 ? ' (hoy)' : ' (en ' + v.diasRestantes + (v.diasRestantes === 1 ? ' día' : ' días') + ')') : '') +
+      (v.valorVenc ? ' · al vencimiento cobrás ' + fmtMoney(v.valorVenc, i.moneda) : '')
+    : i.tipo === 'Otro' ? ''
+    : fmtNum(i.cantidad) + (i.tipo === 'Bono' ? ' VN' : i.tipo === 'Fondo común' ? ' cuotapartes' : ' unidades') + ' · compra a ' + fmtMoney(i.precio, i.moneda) + (v.precio ? ' · hoy ' + fmtMoney(v.precio, i.moneda) : '');
+  return '<div class="card dcard"><div class="dtop"><div><b>' + esc(i.nombre) + '</b><div class="mut small">' + esc(i.tipo) + (i.codigo && i.codigo !== i.nombre ? ' · ' + esc(i.codigo) : '') + ' · desde ' + esc(fechaCorta(i.fecha)) + '</div></div>' +
+    '<span class="tag">' + esc(i.moneda) + '</span></div>' +
+    '<div class="mut small" style="margin-top:12px">Vale hoy</div>' +
+    '<div class="mono grande">' + esc(fmtMoney(v.valor, i.moneda)) + '</div>' +
+    '<div class="mono small ' + (res < 0 ? 'bad' : res > 0 ? 'bien' : 'mut') + '">' + esc(signoMon(res, i.moneda)) + ' (' + (pct > 0 ? '+' : pct < 0 ? '−' : '') + esc(fmtNum(Math.abs(Math.round(pct * 10) / 10))) + '%) sobre ' + esc(fmtMoney(i.costo, i.moneda)) + ' invertidos</div>' +
+    (detalle ? '<div class="mut small">' + esc(detalle) + '</div>' : '') +
+    '<div class="mut small">' + esc(fuenteTxt(v)) + '</div>' +
+    (i.nota ? '<div class="mut small">' + esc(i.nota) + '</div>' : '') +
+    '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="mini" data-inv-vender="' + esc(i.id) + '">' + (i.tipo === 'Plazo fijo' ? 'Lo cobré' : 'Vender') + '</button>' +
+    '<button class="mini" data-inv-editar="' + esc(i.id) + '">Editar</button></div></div>';
+}
+
+function seccionDolares() {
+  const d = invDolares();
+  if (!d) return '';
+  const kp = (l, v, s, c) => '<div class="card kpi"><span class="l">' + esc(l) + '</span><span class="v" ' + (c ? 'style="color:' + c + '"' : '') + '>' + esc(v) + '</span><span class="s">' + esc(s) + '</span></div>';
+  return '<div class="seccion">Dólares ahorrados · no cuentan como inversión</div>' +
+    '<div class="kpis">' +
+    kp('Dólares comprados (neto)', fmtMoney(d.usd, 'USD'), d.compras + (d.compras === 1 ? ' compra' : ' compras') + (d.ventas ? ' · ' + d.ventas + (d.ventas === 1 ? ' venta' : ' ventas') : '')) +
+    kp('Precio promedio de compra', d.usd > 0 ? fmtMoney(d.prom, 'ARS') : '—', 'por cada dólar') +
+    kp('Valen hoy', d.tc ? fmtMoney(d.valor, 'ARS') : '—', d.tc ? 'dólar a ' + fmtMoney(d.tc, 'ARS') : 'sin cotización') +
+    kp('Resultado', d.tc && d.usd > 0 ? signoMon(d.resultado, 'ARS') : '—', d.usd > 0 && d.costo ? (d.resultado >= 0 ? '+' : '−') + fmtNum(Math.abs(Math.round(d.resultado / d.costo * 1000) / 10)) + '% sobre lo que pagaste' : (d.ventas ? 'ya vendidos' : ''), d.resultado < 0 ? 'var(--danger)' : '') +
+    '</div>' +
+    '<div class="mut small">Se calcula con tus transferencias de pesos a dólares (y de dólares a pesos), a precio promedio.' + (d.ventas ? ' Lo ya vendido dejó ' + (d.realizado < 0 ? '− ' : '+ ') + fmtMoney(Math.abs(d.realizado), 'ARS') + '.' : '') + '</div>';
+}
+
+function renderInversiones() {
+  if (INV.lista === null || DB.movs === null) { necesitaDatos(); return; }
+  const activas = INV.lista.filter(invActiva), vendidas = INV.lista.filter(i => !invActiva(i));
+  const tot = invTotales();
+  const kp = (l, v, s, c) => '<div class="card kpi"><span class="l">' + esc(l) + '</span><span class="v" ' + (c ? 'style="color:' + c + '"' : '') + '>' + esc(v) + '</span><span class="s">' + esc(s) + '</span></div>';
+  const kpis = ['ARS', 'USD'].filter(m => tot[m].n).map(m => {
+    const t = tot[m], res = t.valor - t.invertido, pct = t.invertido ? res / t.invertido * 100 : 0, nom = NOMBRE_MON[m];
+    return kp('Valor hoy · ' + nom, fmtMoney(t.valor, m), 'invertiste ' + fmtMoney(t.invertido, m)) +
+      kp('Resultado · ' + nom, signoMon(res, m), (pct > 0 ? '+' : pct < 0 ? '−' : '') + fmtNum(Math.abs(Math.round(pct * 10) / 10)) + '%', res < 0 ? 'var(--danger)' : '');
+  });
+  const ordenadas = activas.slice().sort((a, b) => (INV.valores[b.id] ? INV.valores[b.id].valor : 0) - (INV.valores[a.id] ? INV.valores[a.id].valor : 0));
+  const vendHtml = vendidas.length
+    ? '<details class="card rev"><summary><span class="n">' + vendidas.length + '</span> ' + (vendidas.length === 1 ? 'vendida o cobrada' : 'vendidas o cobradas') + '</summary><ul>' + vendidas.map(i => {
+      const recibido = i.tipo === 'Plazo fijo' ? i.precioVenta : (i.tipo === 'Bono' ? i.cantidad / 100 * i.precioVenta : i.cantidad * i.precioVenta), res = recibido - i.costo;
+      return '<li><div class="t"><b>' + esc(i.nombre) + '</b><br><span class="mut">' + esc(i.tipo) + ' · ' + esc(fechaCorta(i.fecha)) + ' → ' + esc(fechaCorta(i.fechaVenta)) + ' · recibiste ' + esc(fmtMoney(recibido, i.moneda)) + ' · ' +
+        '<span class="' + (res < 0 ? 'bad' : 'bien') + '">' + esc(signoMon(res, i.moneda)) + '</span></span></div>' +
+        '<button class="mini" data-inv-editar="' + esc(i.id) + '">Ver / eliminar</button></li>';
+    }).join('') + '</ul></details>' : '';
+  const hayAuto = activas.some(invConPrecio);
+  const estado = INV.refrescando ? 'Actualizando precios…' : INV.ts ? 'Precios actualizados ' + haceCuanto(INV.ts) : '';
+
+  $('page').innerHTML = '<div class="titulo-fila"><h1>Inversiones</h1><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+    (estado ? '<span class="mut small" id="invest">' + esc(estado) + '</span>' : '') +
+    (hayAuto ? '<button class="mini" id="invact"' + (INV.refrescando ? ' disabled' : '') + '>Actualizar precios</button>' : '') +
+    '<button class="btn primary" id="invnueva">Agregar</button></div></div>' +
+    (INV.error ? '<div class="aviso">No pude leer la hoja de inversiones: ' + esc(INV.error) + '</div>' : '') +
+    (INV.avisos.length ? '<div class="aviso-viejo">' + INV.avisos.map(esc).join('<br>') + '</div>' : '') +
+    (kpis.length ? '<div class="kpis">' + kpis.join('') + '</div>' : '') +
+    (ordenadas.length ? '<div class="seccion">Tus inversiones · de la más grande a la más chica</div><div class="dgrid">' + ordenadas.map(tarjetaInversion).join('') + '</div>'
+      : '<div class="card vacio">Todavía no cargaste inversiones. Tocá <b style="color:var(--text)">Agregar</b>: plazo fijo, fondo, acciones, CEDEARs, bonos, cripto u otras. No es un consejo de inversión: solo te muestra cuánto vale lo que ya tenés.</div>') +
+    vendHtml + seccionDolares();
+
+  $('invnueva').onclick = () => abrirInversion(null);
+  if ($('invact')) $('invact').onclick = () => actualizarPrecios(true);
+  $('page').querySelectorAll('[data-inv-editar]').forEach(b => b.onclick = () => abrirInversion(b.dataset.invEditar));
+  $('page').querySelectorAll('[data-inv-vender]').forEach(b => b.onclick = () => abrirVenta(b.dataset.invVender));
+  if (hayAuto && !INV.refrescando && (!INV.ts || Date.now() - INV.ts > INV_AUTO_MS)) actualizarPrecios(false);
+}
+
+async function actualizarPrecios(manual) {
+  if (INV.refrescando) return;
+  INV.refrescando = true; INV.ts = INV.ts || 0;
+  if (S.vista === 'inversiones' && !hayEdicionAbierta()) renderInversiones();
+  try {
+    const r = await llamar('valuarInversiones');
+    INV.lista = r.lista; INV.valores = r.valores; INV.avisos = r.avisos || []; INV.ts = r.actualizado || Date.now();
+    INV.auto = { valores: r.valores, ts: INV.ts };
+  } catch (e) {
+    INV.ts = Date.now();   // no se reintenta en bucle: queda el botón para volver a probar
+    INV.avisos = ['No pude traer los precios ahora (' + ((e && e.message) || 'sin conexión') + '). Se muestran los últimos conocidos.'];
+  }
+  INV.refrescando = false;
+  if (S.vista === 'inversiones' && !hayEdicionAbierta()) renderInversiones();
+  else if (S.vista === 'dashboard' && !hayEdicionAbierta()) render();
+}
+
+// --- formulario ---
+const INV_CAMPOS = {
+  'Plazo fijo': ['nombre', 'moneda', 'fecha', 'cantidad', 'tna', 'vencimiento', 'nota'],
+  'Fondo común': ['codigo', 'moneda', 'fecha', 'cantidad', 'precio', 'valorManual', 'nota'],
+  'Acción': ['codigo', 'moneda', 'fecha', 'cantidad', 'precio', 'valorManual', 'nota'],
+  'CEDEAR': ['codigo', 'moneda', 'fecha', 'cantidad', 'precio', 'valorManual', 'nota'],
+  'Bono': ['codigo', 'moneda', 'fecha', 'cantidad', 'precio', 'valorManual', 'nota'],
+  'Cripto': ['codigo', 'fecha', 'cantidad', 'precio', 'valorManual', 'nota'],
+  'Otro': ['nombre', 'moneda', 'fecha', 'precio', 'valorManual', 'nota'],
+};
+
+function invEtiquetas(tipo) {
+  const e = {
+    nombre: ['Nombre', tipo === 'Plazo fijo' ? 'Por ejemplo: Plazo fijo Banco Nación (opcional)' : 'Por ejemplo: Departamento, Obligación negociable…'],
+    codigo: [tipo === 'Fondo común' ? 'Nombre del fondo' : 'Código (ticker)', tipo === 'Fondo común' ? 'Escribilo como figura en el banco o la app; tocá Buscar para confirmarlo.' : tipo === 'Cripto' ? 'Por ejemplo: BTC, ETH, SOL' : 'Por ejemplo: GGAL, AAPL, AL30'],
+    moneda: ['Moneda', ''],
+    fecha: [tipo === 'Plazo fijo' ? 'Fecha de constitución' : 'Fecha de compra', ''],
+    cantidad: [tipo === 'Plazo fijo' ? 'Capital' : tipo === 'Fondo común' ? 'Cuotapartes' : tipo === 'Bono' ? 'Valor nominal (VN)' : 'Cantidad', ''],
+    precio: [tipo === 'Otro' ? 'Cuánto invertiste' : tipo === 'Bono' ? 'Precio de compra (cada 100 VN)' : tipo === 'Fondo común' ? 'Valor de la cuotaparte al comprar' : tipo === 'Cripto' ? 'Precio de compra (en dólares)' : 'Precio de compra (por unidad)', ''],
+    tna: ['Tasa (TNA %)', 'La tasa nominal anual que te dio el banco.'],
+    vencimiento: ['Vencimiento', ''],
+    valorManual: [tipo === 'Otro' ? 'Cuánto vale hoy' : 'Valor actual (opcional)', tipo === 'Otro' ? 'Actualizalo cuando quieras; si lo dejás vacío vale lo que invertiste.' : 'Solo si el precio automático no se encuentra. Es el total, no por unidad.'],
+    nota: ['Nota', ''],
+  };
+  return e;
+}
+
+function abrirInversion(id) {
+  const i = id ? INV.lista.filter(x => x.id === id)[0] : null;
+  if (id && !i) return;
+  INV.form = {
+    id: id, confirmaBorrar: false, err: '', consulta: '',
+    v: i ? { tipo: i.tipo, nombre: i.nombre === i.codigo ? '' : i.nombre, codigo: i.codigo, moneda: i.moneda, fecha: i.fecha, cantidad: i.tipo === 'Plazo fijo' || i.tipo !== 'Otro' ? String(i.cantidad) : '', precio: i.tipo === 'Plazo fijo' ? '' : String(i.precio),
+      vencimiento: i.vencimiento, tna: i.tna ? String(i.tna) : '', valorManual: i.valorManual && i.tipo !== 'Otro' ? String(i.valorManual) : (i.tipo === 'Otro' ? String(i.valorManual || '') : ''), nota: i.nota, vendida: !invActiva(i) }
+      : { tipo: 'Plazo fijo', nombre: '', codigo: '', moneda: 'ARS', fecha: hoyLocal(), cantidad: '', precio: '', vencimiento: '', tna: '', valorManual: '', nota: '' },
+  };
+  renderInversionForm();
+}
+
+function renderInversionForm() {
+  const F = INV.form, v = F.v, nuevo = !F.id, E = invEtiquetas(v.tipo);
+  const campos = INV_CAMPOS[v.tipo].map(k => {
+    const [et, ay] = E[k];
+    let input;
+    if (k === 'moneda') input = '<select class="in" data-ik="moneda"><option value="ARS" ' + (v.moneda === 'ARS' ? 'selected' : '') + '>Pesos</option><option value="USD" ' + (v.moneda === 'USD' ? 'selected' : '') + '>Dólares</option></select>';
+    else if (k === 'fecha' || k === 'vencimiento') input = '<input class="in" type="date" data-ik="' + k + '" value="' + esc(v[k]) + '">';
+    else if (k === 'nota') input = '<input class="in" data-ik="nota" autocomplete="off" value="' + esc(v.nota) + '">';
+    else if (k === 'nombre' || k === 'codigo') input = '<input class="in" data-ik="' + k + '" autocomplete="off" value="' + esc(v[k]) + '">' +
+      (k === 'codigo' ? '<div style="margin-top:6px"><button class="mini" type="button" id="invbuscar">Buscar precio</button></div><div id="invconsulta" class="ayuda">' + F.consulta + '</div>' : '');
+    else input = '<input class="in" data-ik="' + k + '" inputmode="decimal" autocomplete="off" value="' + esc(v[k]) + '">';
+    return '<label class="f">' + esc(et) + (['cantidad', 'precio', 'fecha', 'vencimiento', 'tna', 'codigo'].indexOf(k) >= 0 && !(k === 'precio' && v.tipo === 'Plazo fijo') ? ' <b>*</b>' : '') + input + (ay ? '<div class="ayuda">' + esc(ay) + '</div>' : '') + '</label>';
+  }).join('');
+  const tipoSel = '<label class="f">Tipo <b>*</b><select class="in" data-ik="tipo"' + (nuevo ? '' : ' disabled') + '>' + INV_TIPOS.map(t => op(t, v.tipo)).join('') + '</select></label>';
+  const aviso = nuevo ? '<div class="ayuda" style="margin-bottom:10px">Esto solo registra la inversión: no mueve plata de tus cuentas. Si la pagaste desde una cuenta, descontala con un Ajuste en Cargar (nota “Compra …”) para que el patrimonio no la cuente dos veces.</div>' : '';
+  const acciones = !nuevo ? '<button class="btn danger" id="invborrar">' + (F.confirmaBorrar ? 'Tocá de nuevo para eliminar' : 'Eliminar') + '</button>' : '';
+  $('modal').innerHTML = '<div class="overlay" id="ov"><div class="panel"><header><h2>' + (nuevo ? 'Agregar inversión' : 'Editar inversión') + '</h2><button class="x" id="cerrar" aria-label="Cerrar">×</button></header>' +
+    '<div class="body" id="body"><div id="err">' + (F.err ? '<div class="aviso">' + esc(F.err) + '</div>' : '') + '</div>' + aviso + tipoSel + campos + '</div>' +
+    '<footer><button class="btn primary" id="invguardar">Guardar</button>' + acciones + '</footer></div></div>';
+  $('modal').classList.remove('hide');
+  $('ov').onclick = e => { if (e.target.id === 'ov') cerrarInv(); };
+  $('cerrar').onclick = cerrarInv;
+  $('body').querySelectorAll('[data-ik]').forEach(el => {
+    el.onchange = el.oninput = () => {
+      v[el.dataset.ik] = el.value;
+      if (el.dataset.ik === 'tipo') { v.moneda = el.value === 'Cripto' ? 'USD' : v.moneda; F.consulta = ''; renderInversionForm(); }
+    };
+  });
+  if ($('invbuscar')) $('invbuscar').onclick = buscarPrecio;
+  $('invguardar').onclick = guardarInv;
+  if ($('invborrar')) $('invborrar').onclick = borrarInv;
+}
+
+function cerrarInv() { INV.form = null; INV.venta = null; cerrar(); }
+
+async function buscarPrecio() {
+  const F = INV.form, box = $('invconsulta');
+  box.textContent = 'Buscando…';
+  try {
+    const r = await llamar('consultarPrecio', F.v.tipo, F.v.codigo);
+    if (!INV.form) return;
+    if (r.encontrado) {
+      F.consulta = 'Encontrado: ' + esc(r.nombre) + ' · precio actual ' + esc(fmtMoneyRaw(r.precio, F.v.tipo === 'Cripto' ? 'USD' : F.v.moneda)) + (F.v.tipo === 'Fondo común' ? ' (cuotaparte)' : '');
+      if (F.v.tipo === 'Fondo común' && r.nombre) { F.v.codigo = r.nombre; $('body').querySelector('[data-ik="codigo"]').value = r.nombre; }
+      if (!F.v.precio && !F.id) { F.v.precio = String(r.precio); const p = $('body').querySelector('[data-ik="precio"]'); if (p) p.value = String(r.precio).replace('.', ','); F.v.precio = String(r.precio).replace('.', ','); }
+    } else {
+      F.consulta = esc(r.motivo || 'No lo encontré') + (r.parecidos && r.parecidos.length ? '<br>' + r.parecidos.map(p => '<button class="mini" type="button" data-parecido="' + esc(p) + '" style="margin:4px 4px 0 0">' + esc(p) + '</button>').join('') : '');
+    }
+  } catch (e) { F.consulta = esc((e && e.message) || 'No pude consultar ahora'); }
+  box.innerHTML = F.consulta;
+  box.querySelectorAll('[data-parecido]').forEach(b => b.onclick = () => { F.v.codigo = b.dataset.parecido; F.consulta = ''; renderInversionForm(); });
+}
+
+async function guardarInv() {
+  const F = INV.form, b = $('invguardar');
+  b.disabled = true;
+  try {
+    const d = Object.assign({ id: F.id || undefined }, F.v);
+    delete d.vendida;
+    const r = await llamar('guardarInversion', d);
+    aplicarInversiones(r); INV.auto = null; INV.ts = 0;
+    cerrarInv(); toast('Inversión guardada');
+    render();
+  } catch (e) {
+    F.err = (e && e.message) || 'No se pudo guardar';
+    renderInversionForm(); $('body').scrollTop = 0;
+  }
+}
+
+async function borrarInv() {
+  const F = INV.form;
+  if (!F.confirmaBorrar) { F.confirmaBorrar = true; renderInversionForm(); return; }
+  try {
+    const r = await llamar('eliminarInversion', F.id);
+    aplicarInversiones(r);
+    cerrarInv(); toast('Inversión eliminada'); render();
+  } catch (e) { F.err = (e && e.message) || 'No se pudo eliminar'; F.confirmaBorrar = false; renderInversionForm(); }
+}
+
+// --- venta / cobro ---
+function abrirVenta(id) {
+  const i = INV.lista.filter(x => x.id === id)[0];
+  if (!i) return;
+  const v = INV.valores[id] || {};
+  const pf = i.tipo === 'Plazo fijo';
+  INV.venta = { id: id, pf: pf, err: '', fecha: hoyLocal(), precio: String(pf ? (v.valor || '') : (v.precio || i.precio || '')).replace('.', ',') };
+  renderVenta();
+}
+
+function renderVenta() {
+  const V = INV.venta, i = INV.lista.filter(x => x.id === V.id)[0];
+  $('modal').innerHTML = '<div class="overlay" id="ov"><div class="panel"><header><h2>' + (V.pf ? 'Cobraste el plazo fijo' : 'Vender') + ' · ' + esc(i.nombre) + '</h2><button class="x" id="cerrar" aria-label="Cerrar">×</button></header>' +
+    '<div class="body" id="body"><div id="err">' + (V.err ? '<div class="aviso">' + esc(V.err) + '</div>' : '') + '</div>' +
+    '<label class="f">Fecha <b>*</b><input class="in" type="date" data-vk="fecha" value="' + esc(V.fecha) + '"></label>' +
+    '<label class="f">' + (V.pf ? 'Total que cobraste' : i.tipo === 'Bono' ? 'Precio de venta (cada 100 VN)' : 'Precio de venta (por unidad)') + ' <b>*</b><input class="in" data-vk="precio" inputmode="decimal" autocomplete="off" value="' + esc(V.precio) + '">' +
+    '<div class="ayuda">' + (V.pf ? 'Capital más intereses, en ' + (i.moneda === 'USD' ? 'dólares' : 'pesos') + '.' : 'En ' + (i.moneda === 'USD' ? 'dólares' : 'pesos') + '. Queda guardada en “vendidas” con su resultado.') + '</div></label>' +
+    '<div class="ayuda">Esto solo anota la venta: no suma la plata a tus cuentas. Cargala como Ingreso o Ajuste en Cargar si querés que aparezca en tu saldo.</div></div>' +
+    '<footer><button class="btn primary" id="vgrabar">Guardar</button></footer></div></div>';
+  $('modal').classList.remove('hide');
+  $('ov').onclick = e => { if (e.target.id === 'ov') cerrarInv(); };
+  $('cerrar').onclick = cerrarInv;
+  $('body').querySelectorAll('[data-vk]').forEach(el => { el.onchange = el.oninput = () => { V[el.dataset.vk] = el.value; }; });
+  $('vgrabar').onclick = async () => {
+    $('vgrabar').disabled = true;
+    try {
+      const r = await llamar('venderInversion', V.id, { fecha: V.fecha, precio: V.precio });
+      aplicarInversiones(r); INV.auto = null; INV.ts = 0;
+      cerrarInv(); toast(V.pf ? 'Plazo fijo cobrado' : 'Venta registrada'); render();
+    } catch (e) { V.err = (e && e.message) || 'No se pudo guardar'; renderVenta(); }
+  };
+}
+
 // ---------- Cargar ----------
 const C = { tipo: 'Gasto', v: {}, recientes: null, pendientes: [], error: '' };
 const SIN_CUENTA = '(Sin cuenta)';
@@ -1484,7 +1796,8 @@ function renderDashboard() {
   const deuda = { ARS: sumD(false, 'ARS'), USD: sumD(false, 'USD'), UVA: sumD(false, 'UVA') };
   const cobrar = { ARS: sumD(true, 'ARS'), USD: sumD(true, 'USD') };
   const tjAR = tj ? tj.ars : 0, tjUS = tj ? tj.usd : 0;
-  const pat = { ARS: sal.total.ARS + cobrar.ARS - tjAR - deuda.ARS, USD: sal.total.USD + cobrar.USD - tjUS - deuda.USD };
+  const inv = invTotales();
+  const pat = { ARS: sal.total.ARS + cobrar.ARS + inv.ARS.valor - tjAR - deuda.ARS, USD: sal.total.USD + cobrar.USD + inv.USD.valor - tjUS - deuda.USD };
 
   // categorías
   const porCat = {};
@@ -1571,6 +1884,7 @@ function renderDashboard() {
 
   const patHtml = fila('En cuentas', esc(dosMon(sal.total.ARS, sal.total.USD))) +
     fila('Te deben', esc(dosMon(cobrar.ARS, cobrar.USD))) +
+    (inv.ARS.n || inv.USD.n ? fila('Inversiones', esc(dosMon(inv.ARS.valor, inv.USD.valor))) : '') +
     fila('Tarjeta por pagar', '− ' + esc(dosMon(tjAR, tjUS))) +
     fila('Deudas pendientes', '− ' + esc(dosMon(deuda.ARS, deuda.USD))) +
     (deuda.UVA ? fila('Deuda en UVA <span class="mut small">(no se suma)</span>', esc(fmtMoney(deuda.UVA, 'UVA'))) : '') +
@@ -1668,7 +1982,7 @@ function renderDashboard() {
 // Un solo pedido ("cargarTodo") alimenta Movimientos, Deudas, Resúmenes, Dashboard y Cargar.
 // Las solapas se dibujan al instante con lo que ya hay y se refrescan en segundo plano.
 const K = { ts: 0, p: null, h: null };
-const TITULOS = { dashboard: 'Dashboard', flujo: 'Cashflow', cargar: 'Cargar', movs: 'Movimientos', deudas: 'Deudas', resumenes: 'Resúmenes' };
+const TITULOS = { dashboard: 'Dashboard', flujo: 'Cashflow', cargar: 'Cargar', movs: 'Movimientos', deudas: 'Deudas', inversiones: 'Inversiones', resumenes: 'Resúmenes' };
 
 /** Pide algo al servidor y, si falla por un corte pasajero (Google, conexión, demora), lo vuelve a intentar antes de rendirse. */
 async function pedirConReintentos(fn, args, intentos) {
@@ -1703,12 +2017,13 @@ function aplicarTodo(r) {
   if (DB.periodo !== 'todo' && DB.periodo !== 'anio' && mu.indexOf(DB.periodo) < 0) DB.periodo = mu[0] || 'todo';
   C.recientes = r.cargar.recientes; C.pendientes = r.cargar.pendientes;
   Object.assign(PREFS, r.prefs || {});
+  aplicarInversiones(r.inversiones);
 }
 
 /** Algo cambió en la planilla: lo guardado ya no sirve. Se vuelve a pedir en un rato, sin que tengas que esperar. */
 function invalidarTodo() {
   K.ts = 0; K.p = null;
-  M.movs = null; D.lista = null; R.lista = null; DB.movs = null; C.recientes = null;
+  M.movs = null; D.lista = null; R.lista = null; DB.movs = null; C.recientes = null; INV.lista = null;
   clearTimeout(K.h);
   K.h = setTimeout(() => { if (!K.p) refrescarSilencioso(); }, 1500);
 }
@@ -1720,7 +2035,7 @@ const hayEdicionAbierta = () => {
 
 async function refrescarSilencioso() {
   try { aplicarTodo(await traerTodo(true)); } catch (e) { return; }
-  if (['dashboard', 'flujo', 'movs', 'deudas', 'resumenes'].indexOf(S.vista) >= 0 && !hayEdicionAbierta()) render();
+  if (['dashboard', 'flujo', 'movs', 'deudas', 'inversiones', 'resumenes'].indexOf(S.vista) >= 0 && !hayEdicionAbierta()) render();
 }
 
 function esqueleto(vista) {
@@ -1822,6 +2137,11 @@ function armarFlujo() {
     poner(cobro, 'Cobro de tus ingresos fijos', sueldos, 'cobro');
     poner(masMeses(cobro, 1), 'Cobro de tus ingresos fijos', sueldos, 'cobro');
   }
+
+  // plazos fijos en pesos que vencen: vuelven a tus cuentas el capital y los intereses (los ya vencidos no se cuentan: si ya los cobraste, están en tu saldo)
+  (INV.lista || []).filter(i => i.tipo === 'Plazo fijo' && i.estado !== 'Vendida' && i.moneda === 'ARS' && i.vencimiento >= hoy && INV.valores[i.id] && INV.valores[i.id].valorVenc).forEach(i => {
+    poner(i.vencimiento, 'Vence plazo fijo: ' + i.nombre, INV.valores[i.id].valorVenc, 'ingreso');
+  });
 
   ev.sort((a, b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : a.monto - b.monto);
   let saldo = sal.total.ARS;
@@ -2092,7 +2412,7 @@ function consumosProvisorios() {
 }
 
 // ---------- Pasar de solapa deslizando el dedo ----------
-const ORDEN_SOLAPAS = ['dashboard', 'flujo', 'cargar', 'movs', 'deudas', 'resumenes', 'maestros'];
+const ORDEN_SOLAPAS = ['dashboard', 'flujo', 'cargar', 'movs', 'deudas', 'inversiones', 'resumenes', 'maestros'];
 
 (function () {
   let ini = null;
@@ -2255,7 +2575,7 @@ llamar('iniciar').then(r => {
   S.schemas.forEach(s => { S.byId[s.id] = s; });
   const guardado = store.get('maestro');
   S.id = S.byId[guardado] && guardado !== 'reglas' ? guardado : S.schemas[0].id;
-  S.vista = ['dashboard', 'flujo', 'resumenes', 'movs', 'deudas', 'cargar', 'maestros'].indexOf(store.get('vista')) >= 0 ? store.get('vista') : 'dashboard';
+  S.vista = ['dashboard', 'flujo', 'resumenes', 'movs', 'deudas', 'inversiones', 'cargar', 'maestros'].indexOf(store.get('vista')) >= 0 ? store.get('vista') : 'dashboard';
   renderTabs(); render();
   ocultarLoader();
 }).catch(e => {
