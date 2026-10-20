@@ -156,6 +156,20 @@ const fmtNum = n => Number(n).toLocaleString('es-AR', { minimumFractionDigits: N
 // Selector ARS / USD del encabezado: '' = cada monto en su moneda; 'ARS' o 'USD' = todo convertido con el tipo de cambio.
 let VISTA_MON = '';
 try { VISTA_MON = localStorage.getItem('vista_mon') || ''; } catch (e) { /* sin almacenamiento */ }
+// Modo privado: oculta todos los montos de la pantalla (el ojo del encabezado). Se acuerda de la elección.
+let OCULTAR = false;
+try { OCULTAR = localStorage.getItem('ocultar_saldos') === '1'; } catch (e) { /* sin almacenamiento */ }
+const OJO_ABIERTO = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+const OJO_CERRADO = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+function aplicarOjo() {
+  const b = $('ojo');
+  if (!b) return;
+  b.setAttribute('aria-pressed', OCULTAR ? 'true' : 'false');
+  b.title = OCULTAR ? 'Mostrar saldos' : 'Ocultar saldos';
+  b.setAttribute('aria-label', b.title);
+  b.innerHTML = OCULTAR ? OJO_CERRADO : OJO_ABIERTO;
+  document.body.classList.toggle('privado', OCULTAR);   // también difumina los campos que muestran un monto
+}
 function tcActual() { try { return tcEfectivo(); } catch (e) { return 0; } }
 function convertir(n, mon) {
   const tc = tcActual();
@@ -167,6 +181,7 @@ function convertir(n, mon) {
   return { n: n, mon: mon };
 }
 function fmtMoneyRaw(n, mon) {   // espacio fijo (nbsp) para que el símbolo no quede solo en la línea
+  if (OCULTAR) return mon === 'USD' ? 'US$ ***' : mon === 'UVA' ? '*** UVA' : '$ ***';
   if (mon === 'USD') return 'US$ ' + fmtNum(n);
   if (mon === 'UVA') return fmtNum(n) + ' UVA';
   return '$ ' + fmtNum(n);
@@ -565,7 +580,7 @@ function htmlRevision() {
   const kpis = [
     ['Cierre', fechaCorta(r.cierre), 'Vence ' + fechaCorta(r.vencimiento), ''],
     ['Saldo del resumen', fmtMoney(r.saldoActual.ars, 'ARS'), fmtMoney(r.saldoActual.usd, 'USD') + ' · de lo anterior sin pagar: ' + fmtMoney(r.arrastrado.ars, 'ARS'), ''],
-    ['Pago mínimo', '$ ' + fmtNum(r.pagoMinimo), a.filas.length + ' renglones leídos', ''],
+    ['Pago mínimo', fmtMoneyRaw(r.pagoMinimo, 'ARS'), a.filas.length + ' renglones leídos', ''],
     ['Controles', ok ? 'Cierran ✓' : 'No cierran ✗', ok ? 'Consumos y saldo coinciden con el resumen' : 'Revisá antes de importar', ok ? 'ok' : 'bad'],
   ].map(k => '<div class="card kpi"><span class="l">' + k[0] + '</span><span class="v ' + k[3] + '">' + esc(k[1]) + '</span><span class="s">' + esc(k[2]) + '</span></div>').join('');
 
@@ -625,7 +640,7 @@ function selAsig(actual) {
 
 function filaImp(f) {
   const d = I.dec[f.i];
-  const monto = (f.moneda === 'USD' ? 'US$ ' : '$ ') + fmtNum(f.monto);
+  const monto = fmtMoneyRaw(f.monto, f.moneda === 'USD' ? 'USD' : 'ARS');
   const comun = '<td class="mono mut">' + esc(fechaCorta(f.fecha).slice(0, 5)) + '</td><td>' + esc(f.desc) +
     (f.cuota ? ' <span class="tag">cuota ' + esc(f.cuota) + '</span>' : '') + (dupEf(f) ? ' <span class="tag">ya importado</span>' : '') +
     '</td><td class="r mono">' + esc(monto) + '</td>';
@@ -1347,10 +1362,12 @@ function dosMonSigno(ars, usd) {
   return (ars < 0 ? '− ' : '') + fmtMoney(Math.abs(ars), 'ARS') + '  ·  ' + (usd < 0 ? '− ' : '') + fmtMoney(Math.abs(usd), 'USD');
 }
 function centroDonut(n) {
+  if (OCULTAR) return '***';
   const c = convertir(n, 'ARS');
   return c.mon === 'ARS' && c.n >= 1e6 ? '$ ' + (c.n / 1e6).toFixed(2).replace('.', ',') + ' M' : fmtMoneyRaw(c.mon === 'ARS' ? Math.round(c.n) : c.n, c.mon);
 }
 function cortoMiles(n) {
+  if (OCULTAR) return '***';
   const c = convertir(n, 'ARS');
   return c.mon === 'USD' ? fmtNum(Math.round(c.n)) : fmtNum(Math.round(c.n / 1000)) + 'k';
 }
@@ -2243,6 +2260,7 @@ function actualizarCabecera() {
   const tc = tcActual(), v = $('tcval');
   if (v) v.textContent = tc ? 'TC: ' + fmtNum(tc) : 'TC: —';
   document.querySelectorAll('#vmon button').forEach(b => b.classList.toggle('on', b.dataset.m === VISTA_MON));
+  aplicarOjo();
 }
 document.querySelectorAll('#vmon button').forEach(b => b.onclick = () => {
   if (!tcActual()) { toast('Todavía no tengo el tipo de cambio'); return; }
@@ -2251,5 +2269,12 @@ document.querySelectorAll('#vmon button').forEach(b => b.onclick = () => {
   actualizarCabecera();
   if (typeof hayEdicionAbierta === 'function' && !hayEdicionAbierta()) render();
 });
+if ($('ojo')) $('ojo').onclick = () => {
+  OCULTAR = !OCULTAR;
+  try { localStorage.setItem('ocultar_saldos', OCULTAR ? '1' : '0'); } catch (e) { /* sin almacenamiento */ }
+  aplicarOjo();
+  if (typeof hayEdicionAbierta === 'function' && !hayEdicionAbierta()) render();
+  toast(OCULTAR ? 'Saldos ocultos' : 'Saldos visibles');
+};
 actualizarCabecera();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { /* sin instalación: no pasa nada */ });

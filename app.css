@@ -337,3 +337,21 @@ details.desglose > summary:hover .n { color:var(--text); }
 
 /* Datos que no se pudieron actualizar */
 .aviso-viejo { background:rgba(224,168,0,.12); border:1px solid rgba(224,168,0,.45); color:var(--text); border-radius:10px; padding:10px 14px; margin-bottom:14px; font-size:13px; display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; }
+
+/* Ojo: ocultar los saldos */
+.ojo { flex:none; width:36px; height:36px; display:inline-flex; align-items:center; justify-content:center; border-radius:10px; border:1px solid var(--border); background:transparent; color:var(--text-2); cursor:pointer; padding:0; }
+.ojo:hover { color:var(--text); border-color:var(--border-strong); }
+.ojo[aria-pressed="true"] { color:var(--danger); border-color:var(--accent); background:var(--accent-tint); }
+/* TC, moneda y ojo van juntos a la derecha; si falta lugar, se achican las solapas (no se sale de pantalla) */
+.cabder { margin-left:auto; display:flex; align-items:center; gap:12px; flex:none; }
+.cabder .tcbox { margin-left:0; }
+.tabs { min-width:0; overflow-x:auto; scrollbar-width:none; }
+.tabs::-webkit-scrollbar { display:none; }
+@media (max-width:1180px) { .top { gap:20px; padding:0 20px; } }
+@media (max-width:720px) {
+  .cabder { order:2; align-self:center; gap:8px; }
+  .cabder .tcbox { order:0; margin-left:0; align-self:center; }
+  .ojo { width:34px; height:34px; }
+}
+/* modo privado: los campos con un monto quedan difuminados hasta que los tocás para editar */
+body.privado input[inputmode="decimal"]:not(:focus) { filter:blur(6px); }
