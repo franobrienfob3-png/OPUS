@@ -358,6 +358,10 @@ details.desglose > summary:hover .n { color:var(--text); }
 /* modo privado: los campos con un monto quedan difuminados hasta que los tocás para editar */
 body.privado input[inputmode="decimal"]:not(:focus) { filter:blur(6px); }
 
+/* El logo lleva al Dashboard */
+.brand { cursor:pointer; border-radius:10px; }
+.brand:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
+
 /* Teléfonos chicos: botones un poco más compactos para que nada se pise en el encabezado */
 @media (max-width:360px) {
   .ojo, .tema { width:30px; height:30px; }

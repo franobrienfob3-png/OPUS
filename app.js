@@ -2293,6 +2293,18 @@ document.querySelectorAll('#vmon button').forEach(b => b.onclick = () => {
   actualizarCabecera();
   if (typeof hayEdicionAbierta === 'function' && !hayEdicionAbierta()) render();
 });
+// el logo de arriba a la izquierda lleva al Dashboard (como en cualquier app)
+(function () {
+  const marca = document.querySelector('.brand');
+  if (!marca) return;
+  const ir = () => { try { if (S.schemas.length) irVista('dashboard'); } catch (e) { /* todavía no hay sesión: no hay a dónde ir */ } };
+  marca.setAttribute('role', 'link');
+  marca.setAttribute('tabindex', '0');
+  marca.setAttribute('aria-label', 'Ir al Dashboard');
+  marca.title = 'Ir al Dashboard';
+  marca.onclick = ir;
+  marca.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ir(); } };
+})();
 if ($('tema')) $('tema').onclick = cambiarTema;
 if ($('ojo')) $('ojo').onclick = () => {
   OCULTAR = !OCULTAR;
