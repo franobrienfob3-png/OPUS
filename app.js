@@ -1,4 +1,4 @@
-const $ = id => document.getElementById(id);
+﻿const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -230,7 +230,7 @@ function celda(m, c, v, f) {
 // ---------- vista ----------
 function renderTabs() {
   const activa = (S.vista === 'reglas' || S.vista === 'importar') ? 'resumenes' : S.vista;
-  $('tabs').innerHTML = [['dashboard', 'Dashboard'], ['flujo', 'Cashflow'], ['cargar', 'Cargar'], ['movs', 'Movimientos'], ['deudas', 'Deudas'], ['inversiones', 'Inversiones'], ['resumenes', 'Resúmenes'], ['maestros', 'DDMM']].map(t =>
+  $('tabs').innerHTML = [['dashboard', 'Dashboard'], ['flujo', 'Cashflow'], ['cargar', 'Cargar'], ['movs', 'Movimientos'], ['inversiones', 'Inversiones'], ['deudas', 'Deudas'], ['resumenes', 'Resúmenes'], ['maestros', 'DDMM']].map(t =>
     '<button class="tab ' + (activa === t[0] ? 'on' : '') + '" data-v="' + t[0] + '">' + t[1] + '</button>').join('');
   $('tabs').querySelectorAll('.tab').forEach(b => b.onclick = () => irVista(b.dataset.v));
   actualizarCabecera();
@@ -2412,7 +2412,7 @@ function consumosProvisorios() {
 }
 
 // ---------- Pasar de solapa deslizando el dedo ----------
-const ORDEN_SOLAPAS = ['dashboard', 'flujo', 'cargar', 'movs', 'deudas', 'inversiones', 'resumenes', 'maestros'];
+const ORDEN_SOLAPAS = ['dashboard', 'flujo', 'cargar', 'movs', 'inversiones', 'deudas', 'resumenes', 'maestros'];
 
 (function () {
   let ini = null;
