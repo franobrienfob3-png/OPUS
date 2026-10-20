@@ -1,4 +1,5 @@
 :root {
+    color-scheme:dark;
     --bg:#0F0E0E; --surface:#171615; --surface-2:#1A1918; --hover-row:#1C1B1A; --hover-item:#1F1D1C;
     --border:#232120; --border-row:#1E1C1B; --border-strong:#2A2826;
     --text:#F2EFEB; --text-2:#C9C4BE; --muted:#8A847E;
@@ -339,8 +340,8 @@ details.desglose > summary:hover .n { color:var(--text); }
 .aviso-viejo { background:rgba(224,168,0,.12); border:1px solid rgba(224,168,0,.45); color:var(--text); border-radius:10px; padding:10px 14px; margin-bottom:14px; font-size:13px; display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; }
 
 /* Ojo: ocultar los saldos */
-.ojo { flex:none; width:36px; height:36px; display:inline-flex; align-items:center; justify-content:center; border-radius:10px; border:1px solid var(--border); background:transparent; color:var(--text-2); cursor:pointer; padding:0; }
-.ojo:hover { color:var(--text); border-color:var(--border-strong); }
+.ojo, .tema { flex:none; width:36px; height:36px; display:inline-flex; align-items:center; justify-content:center; border-radius:10px; border:1px solid var(--border); background:transparent; color:var(--text-2); cursor:pointer; padding:0; }
+.ojo:hover, .tema:hover { color:var(--text); border-color:var(--border-strong); }
 .ojo[aria-pressed="true"] { color:var(--danger); border-color:var(--accent); background:var(--accent-tint); }
 /* TC, moneda y ojo van juntos a la derecha; si falta lugar, se achican las solapas (no se sale de pantalla) */
 .cabder { margin-left:auto; display:flex; align-items:center; gap:12px; flex:none; }
@@ -351,7 +352,37 @@ details.desglose > summary:hover .n { color:var(--text); }
 @media (max-width:720px) {
   .cabder { order:2; align-self:center; gap:8px; }
   .cabder .tcbox { order:0; margin-left:0; align-self:center; }
-  .ojo { width:34px; height:34px; }
+  .ojo, .tema { width:34px; height:34px; }
+  .cabder .tcbox { flex-direction:column; gap:3px; }
 }
 /* modo privado: los campos con un monto quedan difuminados hasta que los tocás para editar */
 body.privado input[inputmode="decimal"]:not(:focus) { filter:blur(6px); }
+
+/* Teléfonos chicos: botones un poco más compactos para que nada se pise en el encabezado */
+@media (max-width:360px) {
+  .ojo, .tema { width:30px; height:30px; }
+  .cabder { gap:6px; }
+  .brand { gap:8px; }
+}
+
+/* Ventanas angostas (tablet): el menú pasa a una segunda fila para que se vean todas las solapas */
+@media (max-width:1100px) {
+  .top { flex-wrap:wrap; height:auto; padding:10px 20px 0; row-gap:0; gap:0 8px; }
+  .brand { order:1; height:44px; }
+  .cabder { order:2; align-self:center; }
+  .tabs { order:3; width:100%; height:44px; }
+  .tab { padding:0 12px; }
+}
+
+/* Modo claro: fondo blanco y letras oscuras; el rojo de OPUS se mantiene */
+:root[data-tema="claro"] {
+  color-scheme:light;
+  --bg:#FFFFFF; --surface:#F7F6F4; --surface-2:#F1EFEC; --hover-row:#F3F1EE; --hover-item:#EEECE8;
+  --border:#E4E1DD; --border-row:#EDEBE7; --border-strong:#D5D1CC;
+  --text:#1A1918; --text-2:#45413E; --muted:#6B6661;
+  --accent:#C62F2B; --danger:#C8352D; --accent-tint:#FBE9E8;
+}
+:root[data-tema="claro"] .opus-loader { --ring-2:#C9C4BE; --ring-3:#E3DFDA; }
+:root[data-tema="claro"] .overlay { background:rgba(26,25,24,.4); }
+:root[data-tema="claro"] .dd-panel { box-shadow:0 12px 32px rgba(26,25,24,.18); }
+:root[data-tema="claro"] .aviso-viejo { background:rgba(224,168,0,.16); border-color:rgba(176,124,0,.5); }

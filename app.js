@@ -161,6 +161,27 @@ let OCULTAR = false;
 try { OCULTAR = localStorage.getItem('ocultar_saldos') === '1'; } catch (e) { /* sin almacenamiento */ }
 const OJO_ABIERTO = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const OJO_CERRADO = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+// Modo claro / oscuro (tema.js lo deja aplicado antes de dibujar; acá se cambia y se guarda)
+const SOL = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>';
+const LUNA = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+const temaActual = () => (document.documentElement.getAttribute('data-tema') === 'claro' ? 'claro' : 'oscuro');
+function pintarBotonTema() {
+  const b = $('tema');
+  if (!b) return;
+  const claro = temaActual() === 'claro';
+  b.innerHTML = claro ? LUNA : SOL;   // el dibujo es el modo al que se pasa
+  b.title = claro ? 'Cambiar a modo oscuro' : 'Cambiar a modo claro';
+  b.setAttribute('aria-label', b.title);
+}
+function cambiarTema() {
+  const nuevo = temaActual() === 'claro' ? 'oscuro' : 'claro';
+  document.documentElement.setAttribute('data-tema', nuevo);
+  try { localStorage.setItem('tema', nuevo); } catch (e) { /* sin almacenamiento */ }
+  const m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.setAttribute('content', nuevo === 'claro' ? '#FFFFFF' : '#0F0E0E');
+  pintarBotonTema();
+  if (typeof hayEdicionAbierta === 'function' && !hayEdicionAbierta()) render();   // los gráficos toman los colores del modo
+}
 function aplicarOjo() {
   const b = $('ojo');
   if (!b) return;
@@ -752,7 +773,9 @@ function enlazarImportar() {
 
 // ---------- Movimientos ----------
 const MESES_CORTO = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-const COLORES_CAT = ['#F2EFEB', '#C62F2B', '#E5574F', '#8C2A25', '#8A847E', '#5E5955', '#3A3634'];
+const COLORES_CAT_OSC = ['#F2EFEB', '#C62F2B', '#E5574F', '#8C2A25', '#8A847E', '#5E5955', '#3A3634'];
+const COLORES_CAT_CLARO = ['#1A1918', '#C62F2B', '#E5574F', '#8C2A25', '#6F6A65', '#A39E98', '#CFCAC4'];
+const coloresCat = () => (document.documentElement.getAttribute('data-tema') === 'claro' ? COLORES_CAT_CLARO : COLORES_CAT_OSC);
 const M = { movs: null, periodo: '', q: '', cuentas: [], tipos: [], dd: '', cat: '', campo: 'fecha', desc: true, limite: 120, edit: null };
 
 const nombreMes = ym => MESES_CORTO[Number(ym.slice(5, 7)) - 1] + ' ' + ym.slice(0, 4);
@@ -803,8 +826,8 @@ function renderMovs() {
     resto.forEach(c => otras.add(c.n));
     cats = cats.slice(0, 6).concat([{ n: 'Otras', total: resto.reduce((s, c) => s + c.total, 0) }]);
   }
-  cats.forEach((c, i) => { c.color = COLORES_CAT[Math.min(i, COLORES_CAT.length - 1)]; });
-  const colorDeCat = n => { const c = cats.find(x => x.n === n) || cats.find(x => x.n === 'Otras'); return c ? c.color : COLORES_CAT[6]; };
+  cats.forEach((c, i) => { c.color = coloresCat()[Math.min(i, coloresCat().length - 1)]; });
+  const colorDeCat = n => { const c = cats.find(x => x.n === n) || cats.find(x => x.n === 'Otras'); return c ? c.color : coloresCat()[6]; };
   const grupoCat = m => { const c = categoriaDe(m); return otras.has(c) ? 'Otras' : c; };
   if (M.cat && !cats.some(c => c.n === M.cat)) M.cat = '';
 
@@ -1468,7 +1491,7 @@ function renderDashboard() {
   gARS.forEach(m => { const c = catDe[m.subcategoria] || 'Otros'; porCat[c] = (porCat[c] || 0) + m.monto; });
   let cats = Object.keys(porCat).map(n => ({ n, total: porCat[n] })).sort((a, b) => b.total - a.total);
   if (cats.length > 7) { const resto = cats.slice(6); cats = cats.slice(0, 6).concat([{ n: 'Otras', total: resto.reduce((s, c) => s + c.total, 0) }]); }
-  cats.forEach((c, i) => { c.color = COLORES_CAT[Math.min(i, COLORES_CAT.length - 1)]; });
+  cats.forEach((c, i) => { c.color = coloresCat()[Math.min(i, coloresCat().length - 1)]; });
   let acum = 0;
   const donut = gas.ARS ? 'conic-gradient(' + cats.map(c => { const a = acum; acum += c.total / gas.ARS * 100; return c.color + ' ' + a + '% ' + acum + '%'; }).join(',') + ')' : 'var(--surface-2)';
 
@@ -2261,6 +2284,7 @@ function actualizarCabecera() {
   if (v) v.textContent = tc ? 'TC: ' + fmtNum(tc) : 'TC: —';
   document.querySelectorAll('#vmon button').forEach(b => b.classList.toggle('on', b.dataset.m === VISTA_MON));
   aplicarOjo();
+  pintarBotonTema();
 }
 document.querySelectorAll('#vmon button').forEach(b => b.onclick = () => {
   if (!tcActual()) { toast('Todavía no tengo el tipo de cambio'); return; }
@@ -2269,6 +2293,7 @@ document.querySelectorAll('#vmon button').forEach(b => b.onclick = () => {
   actualizarCabecera();
   if (typeof hayEdicionAbierta === 'function' && !hayEdicionAbierta()) render();
 });
+if ($('tema')) $('tema').onclick = cambiarTema;
 if ($('ojo')) $('ojo').onclick = () => {
   OCULTAR = !OCULTAR;
   try { localStorage.setItem('ocultar_saldos', OCULTAR ? '1' : '0'); } catch (e) { /* sin almacenamiento */ }
