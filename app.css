@@ -392,3 +392,8 @@ body.privado input[inputmode="decimal"]:not(:focus) { filter:blur(6px); }
 :root[data-tema="claro"] .aviso-viejo { background:rgba(224,168,0,.16); border-color:rgba(176,124,0,.5); }
 .bien { color:#2e9d5b; }
 :root[data-tema="claro"] .bien { color:#1f7a45; }
+.opus-login__link { background:none; border:0; color:var(--muted); font-size:13px; cursor:pointer; text-decoration:underline; padding:6px; margin-top:6px; }
+.opus-login__own { width:min(340px, 86vw); display:flex; flex-direction:column; gap:10px; align-items:stretch; }
+.opus-login__own .in { width:100%; }
+.opus-login__btns { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
+.opus-login__ayuda { font-size:13px; color:var(--muted); text-align:center; }

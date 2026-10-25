@@ -14,9 +14,9 @@
 <link rel="icon" type="image/png" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="tema.js?v=20261020121705"></script>
-<link rel="stylesheet" href="app.css?v=20261020121705">
-<script src="config.js?v=20261020121705"></script>
+<script src="tema.js?v=20261025161402"></script>
+<link rel="stylesheet" href="app.css?v=20261025161402">
+<script src="config.js?v=20261025161402"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -52,11 +52,17 @@
   <div class="opus-login__sub">Acceso privado</div>
   <div id="gbtn"></div>
   <div class="opus-login__msg" id="loginmsg"></div>
+  <button class="opus-login__link" id="miplanilla" type="button">Usar mi propia planilla</button>
+  <div class="opus-login__own hide" id="miplanillabox">
+    <input class="in" id="apiurl" placeholder="Pegá acá la dirección de tu OPUS (termina en /exec)" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <div class="opus-login__btns"><button class="btn primary" id="apiguardar" type="button">Usar esta planilla</button><button class="btn hide" id="apireset" type="button">Volver a la original</button></div>
+    <a class="opus-login__ayuda" href="instalar.html">¿Cómo la armo?</a>
+  </div>
 </div>
 
 <div id="modal" class="hide"></div>
 <div id="toast" class="hide"></div>
 
-<script src="app.js?v=20261020121705"></script>
+<script src="app.js?v=20261025161402"></script>
 </body>
 </html>

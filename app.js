@@ -8,6 +8,10 @@ const store = {
 
 // ---------- Acceso con Google y comunicación con el servidor ----------
 const CFG = window.OPUS_CONFIG || {};
+// Cada persona puede usar su propia planilla: pega la dirección de su OPUS (termina en /exec) y queda guardada en este navegador.
+const API_PROPIA = /^https:\/\/script\.google\.com\/macros\/s\/[\w-]{20,}\/exec$/;
+let API_URL = CFG.apiUrl;
+try { const guardada = localStorage.getItem('opus_api'); if (guardada && API_PROPIA.test(guardada)) API_URL = guardada; } catch (e) { /* sin almacenamiento */ }
 let TOKEN = '';
 try { TOKEN = localStorage.getItem('opus_token') || sessionStorage.getItem('opus_token') || ''; } catch (e) { /* sin almacenamiento */ }
 
@@ -78,6 +82,28 @@ async function mostrarLogin() {
   } catch (e) { msg.textContent = e.message; verBoton(); }
 }
 
+/** Botones de "Usar mi propia planilla" en la pantalla de acceso. */
+function prepararPlanillaPropia() {
+  const caja = $('miplanillabox'), link = $('miplanilla');
+  if (!caja || !link) return;
+  const propia = API_URL !== CFG.apiUrl;
+  link.textContent = propia ? 'Estás usando tu propia planilla · cambiar' : 'Usar mi propia planilla';
+  $('apireset').classList.toggle('hide', !propia);
+  link.onclick = () => { caja.classList.toggle('hide'); if (!caja.classList.contains('hide')) $('apiurl').focus(); };
+  const cambiar = url => {
+    try { if (url) localStorage.setItem('opus_api', url); else localStorage.removeItem('opus_api'); } catch (e) { /* sin almacenamiento */ }
+    guardarSesion(''); guardarToken('');   // la sesión de la otra planilla no sirve en esta
+    location.reload();
+  };
+  $('apiguardar').onclick = () => {
+    const url = $('apiurl').value.trim();
+    if (!API_PROPIA.test(url)) { $('loginmsg').textContent = 'Esa dirección no parece la de tu OPUS. Tiene que empezar con https://script.google.com/macros/s/ y terminar en /exec.'; return; }
+    cambiar(url);
+  };
+  $('apireset').onclick = () => cambiar('');
+}
+prepararPlanillaPropia();
+
 function salir() {
   guardarToken('');
   guardarSesion('');
@@ -90,7 +116,7 @@ async function enviar(fn, args) {
   const corte = new AbortController();
   const reloj = setTimeout(() => corte.abort(), 45000);
   try {
-    resp = await fetch(CFG.apiUrl, {
+    resp = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify(SESION ? { sesion: SESION, fn: fn, args: args } : { token: TOKEN, fn: fn, args: args }),
@@ -1762,12 +1788,36 @@ function barra(pct, rojo) {
   return '<div class="barra"><i style="width:' + Math.min(100, Math.max(0, pct)) + '%;' + (rojo ? 'background:var(--accent)' : '') + '"></i></div>';
 }
 
+/** Lista de lo que falta para empezar (solo aparece mientras falte algo importante). */
+function primerosPasos(sal) {
+  const ingresos = S.data.fijos.filas.filter(f => f.v.Movimiento === 'Ingreso' && f.v.Estado !== 'Inactivo').length;
+  const pasos = [
+    { ok: cuentasActivas().length > 0, t: 'Cargá tus cuentas', d: 'Bancos, billeteras y efectivo (en pesos y, si tenés, en dólares).', id: 'cuentas', obl: true },
+    { ok: tarjetasActivas().length > 0, t: 'Cargá tus tarjetas', d: 'Solo si usás tarjeta de crédito.', id: 'tarjetas', obl: false },
+    { ok: ingresos > 0, t: 'Cargá tu sueldo', d: 'En Fijos, con Movimiento “Ingreso”. Así el Cashflow sabe cuánto entra.', id: 'fijos', obl: true },
+    { ok: sal.hayAjuste, t: 'Decí cuánta plata tenés hoy', d: 'En Cargar → Ajuste, con la nota “Saldo inicial”, una vez por cuenta.', vista: 'cargar', obl: true },
+  ];
+  if (!pasos.some(p => p.obl && !p.ok)) return '';
+  const fila = (p, i) => '<div class="dfila"><span class="n">' + (p.ok ? '✓ ' : (i + 1) + '. ') + '<b>' + esc(p.t) + '</b>' + (p.obl ? '' : ' <span class="mut small">(opcional)</span>') +
+    '<div class="mut small" style="font-weight:400">' + esc(p.d) + '</div></span>' +
+    (p.ok ? '<span class="mut small">Listo</span>' : '<button class="mini" data-paso="' + esc(p.id || '') + '" data-vista="' + esc(p.vista || 'maestros') + '">Ir</button>') + '</div>';
+  return '<div class="card cuerpo-c"><h2 class="titulo-c">Primeros pasos</h2><div class="mut" style="font-weight:400;margin-bottom:10px">Con esto OPUS ya te muestra tu situación real. Después podés cargar gastos, deudas, presupuesto y más.</div>' + pasos.map(fila).join('') + '</div>';
+}
+
+function enlazarPasos() {
+  $('page').querySelectorAll('[data-paso]').forEach(b => b.onclick = () => {
+    if (b.dataset.vista === 'maestros') { S.id = b.dataset.paso; store.set('maestro', S.id); }
+    irVista(b.dataset.vista);
+  });
+}
+
 function renderDashboard() {
   if (DB.movs === null) { necesitaDatos(); return; }
   const util = DB.movs.filter(m => m.tipo === 'Gasto' || m.tipo === 'Ingreso');
   const sal = saldosCuentas(), tj = tarjetaPendiente(), cf = cuotasFuturas();
   if (!util.length && !sal.lista.some(c => c.mov)) {
-    $('page').innerHTML = '<div><h1>Dashboard</h1></div><div class="card vacio">Todavía no hay movimientos para mostrar. Importá un resumen en <b style="color:var(--text)">Resúmenes</b> o cargá algo en <b style="color:var(--text)">Cargar</b>.</div>';
+    $('page').innerHTML = '<div><h1>Dashboard</h1></div>' + primerosPasos(sal) + '<div class="card vacio">Todavía no hay movimientos para mostrar. Cargá algo en <b style="color:var(--text)">Cargar</b>' + (DB.res.length ? '' : ' o importá un resumen en <b style="color:var(--text)">Resúmenes</b>') + '.</div>';
+    enlazarPasos();
     return;
   }
   const meses = mesesDe(util), anio = (meses[0] || DB.hoy).slice(0, 4);
@@ -1957,7 +2007,7 @@ function renderDashboard() {
     '';
 
   $('page').innerHTML =
-    '<div class="titulo-fila"><h1>Dashboard</h1>' + periodos + '</div>' + kpis +
+    '<div class="titulo-fila"><h1>Dashboard</h1>' + periodos + '</div>' + primerosPasos(sal) + kpis +
     (avisos.length ? card('Para mirar', '<ul class="avisos">' + avisos.map(a => '<li>' + esc(a) + '</li>').join('') + '</ul>') : '') +
     '<div class="dgrid-db">' +
     card('Ingresos y gastos por mes', evolucion || '<div class="mut" style="font-weight:400">Sin datos</div>', 'ancho') +
@@ -1976,6 +2026,7 @@ function renderDashboard() {
     '';
   $('dbper').onchange = e => { DB.periodo = e.target.value; renderDashboard(); };
   enlazarChk();
+  enlazarPasos();
 }
 
 // ---------- Datos compartidos entre solapas ----------

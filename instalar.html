@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Armá tu propio OPUS</title>
+<meta name="robots" content="noindex">
+<style>
+  :root { --bg:#0b0b0c; --card:#161618; --text:#f4f4f5; --muted:#a1a1aa; --border:#2a2a2e; --accent:#e5322d; --ok:#2e9d5b; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f6f5f3; --card:#ffffff; --text:#18181b; --muted:#5f5f68; --border:#dedbd6; --accent:#d12a25; --ok:#1f7a45; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.55 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width:720px; margin:0 auto; padding:28px 16px 64px; }
+  h1 { font-size:28px; letter-spacing:-.02em; margin:0 0 6px; }
+  h2 { font-size:19px; margin:0 0 10px; display:flex; gap:10px; align-items:center; }
+  .n { flex:none; width:30px; height:30px; border-radius:50%; background:var(--accent); color:#fff; font-weight:700; display:grid; place-items:center; font-size:15px; }
+  .lead { color:var(--muted); margin:0 0 22px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:18px 18px 14px; margin:0 0 14px; }
+  ol, ul { margin:8px 0; padding-left:22px; } li { margin:6px 0; }
+  .btn { display:inline-block; background:var(--accent); color:#fff; text-decoration:none; font-weight:600; padding:11px 20px; border-radius:10px; margin:6px 0 4px; }
+  .nota { color:var(--muted); font-size:14px; margin:10px 0 2px; }
+  .aviso { border-left:3px solid var(--accent); padding:6px 12px; margin:12px 0 4px; background:rgba(229,50,45,.07); border-radius:0 8px 8px 0; font-size:15px; }
+  code { background:rgba(127,127,127,.18); padding:1px 6px; border-radius:5px; font-size:14px; word-break:break-all; }
+  b.k { white-space:nowrap; }
+  a { color:inherit; }
+  details summary { cursor:pointer; font-weight:600; padding:4px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Armá tu propio OPUS</h1>
+  <p class="lead">OPUS es un sistema para ordenar tu plata: gastos, ingresos, deudas, tarjetas y más. Vas a tener <b>tu propia planilla en tu Google Drive</b>: nadie más ve tus datos. Son unos 15 minutos, se hace una sola vez y los pasos 1 a 3 conviene hacerlos desde una computadora.</p>
+
+  <div class="card">
+    <b>Antes de empezar</b>
+    <ul>
+      <li>Una cuenta de Google (Gmail) tuya.</li>
+      <li>Una computadora para los primeros pasos. Después lo usás desde el celular.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">1</span> Hacé tu copia</h2>
+    <p>Tocá el botón. Se abre una pantalla de Google que te pide hacer una copia: tocá <b class="k">Hacer una copia</b>.</p>
+    <a class="btn" href="https://docs.google.com/spreadsheets/d/1snBwnjV02i9Cb_u-U3SfsxqEX6mUc9itFOIc7mzUOTY/copy" target="_blank" rel="noopener">Hacer mi copia</a>
+    <p class="nota">Si Google dice que no tenés acceso, pedile a quien te pasó esta guía que te comparta la planilla “OPUS plantilla”. Tu copia se llama “Copia de OPUS plantilla”: podés cambiarle el nombre.</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">2</span> Preparala</h2>
+    <ol>
+      <li>En tu copia, mirá arriba: después de unos segundos aparece un menú nuevo que se llama <b class="k">OPUS</b> (al lado de “Ayuda”). Si no aparece, recargá la página.</li>
+      <li>Tocá <b class="k">OPUS → 1. Preparar mi planilla</b>.</li>
+      <li>Google te pide permisos. Tocá <b class="k">Continuar</b> y elegí tu cuenta. Va a decir <i>“Google no verificó esta aplicación”</i>: es normal, porque el programa está en tu propia planilla. Tocá <b class="k">Configuración avanzada</b> → <b class="k">Ir a OPUS plantilla (no seguro)</b> → <b class="k">Permitir</b>.</li>
+      <li>Si te pidió permisos, volvé a tocar <b class="k">OPUS → 1. Preparar mi planilla</b>. Tiene que aparecer un mensaje que dice que la planilla está lista y se crean las pestañas.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">3</span> Publicala</h2>
+    <ol>
+      <li>En la planilla: <b class="k">Extensiones → Apps Script</b>. Se abre otra pestaña.</li>
+      <li>Arriba a la derecha tocá <b class="k">Implementar → Nueva implementación</b>.</li>
+      <li>Tocá la ruedita ⚙ al lado de “Seleccionar tipo” y elegí <b class="k">Aplicación web</b>.</li>
+      <li>Completá así: <b>Ejecutar como: Yo</b> (tu mail) · <b>Quién tiene acceso: Cualquier persona</b>.</li>
+      <li>Tocá <b class="k">Implementar</b>. Si te vuelve a pedir permisos, aceptalos igual que antes.</li>
+      <li>Copiá la <b>URL de la aplicación web</b> (empieza con <code>https://script.google.com/macros/s/</code> y termina en <code>/exec</code>). Guardala: la vas a necesitar.</li>
+    </ol>
+    <div class="aviso">“Cualquier persona” es lo normal y es seguro: aunque alguien tenga la dirección, solo se puede entrar con tu cuenta de Google. <b>La primera cuenta que entre a tu OPUS queda como dueña, así que el primer ingreso tiene que ser tuyo.</b></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">4</span> Entrá</h2>
+    <ol>
+      <li>Abrí <b>opusapp.com.ar</b>.</li>
+      <li>Tocá el texto <b class="k">Usar mi propia planilla</b> (abajo del botón de Google), pegá la URL del paso 3 y tocá <b class="k">Usar esta planilla</b>.</li>
+      <li>Entrá con Google, con <b>la misma cuenta con la que hiciste la copia</b>.</li>
+    </ol>
+    <p class="nota">Esto se hace una vez en cada aparato (computadora, celular). Después queda guardado.</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">5</span> Primeros pasos</h2>
+    <p>El Dashboard te muestra una lista de lo que falta cargar, con un botón <b class="k">Ir</b> en cada paso: tus cuentas, tus tarjetas, tu sueldo y cuánta plata tenés hoy. Con eso ya tenés una foto real de tu situación. Después podés ir sumando gastos, deudas y presupuesto.</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">6</span> En el celular</h2>
+    <p>Abrí <b>opusapp.com.ar</b> en el navegador, hacé el paso 4 (pegar la URL) y, desde el menú del navegador, elegí <b class="k">Agregar a la pantalla de inicio</b> (o <b class="k">Instalar app</b>). Queda con su ícono, como cualquier aplicación.</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">7</span> Copia de seguridad (recomendado)</h2>
+    <p>En tu planilla: <b class="k">OPUS → 3. Activar copia de seguridad semanal</b>. Todos los domingos de madrugada se guarda una copia en tu Drive (en la carpeta “OPUS - Respaldos”) y se conservan las últimas 12.</p>
+  </div>
+
+  <div class="card">
+    <b>Si algo no sale</b>
+    <details><summary>Dice que no tengo acceso, o no me deja entrar</summary>
+      <p>Entraste con una cuenta de Google distinta a la que hizo la copia, y esa quedó como dueña. En la planilla: <b class="k">Extensiones → Apps Script → Configuración del proyecto (⚙)</b> → bajá hasta “Propiedades de la secuencia de comandos” y editá o borrá <code>OPUS_EMAIL</code>. Si la borrás, la próxima cuenta que entre queda como dueña.</p></details>
+    <details><summary>Cambié algo en el código y no se nota</summary>
+      <p>En Apps Script: <b class="k">Implementar → Administrar implementaciones</b> → el lápiz → <b>Versión: Nueva versión</b> → Implementar. La URL no cambia.</p></details>
+    <details><summary>No aparece el menú OPUS</summary>
+      <p>Recargá la planilla y esperá unos segundos. Tiene que ser la copia que hiciste (no la plantilla original).</p></details>
+    <details><summary>La pantalla queda en blanco o dice que no se pudo conectar</summary>
+      <p>Revisá que la URL que pegaste sea la de <b>tu</b> planilla y termine en <code>/exec</code>. En la pantalla de entrada podés tocar “Estás usando tu propia planilla · cambiar” para pegarla de nuevo.</p></details>
+  </div>
+
+  <p class="nota">Tus datos viven solo en tu planilla de tu Drive. Ni el sitio opusapp.com.ar ni quien te pasó esta guía pueden verlos.</p>
+</main>
+</body>
+</html>
