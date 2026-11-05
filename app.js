@@ -1706,6 +1706,28 @@ function renderResumenes() {
   $('page').querySelectorAll('.fila-res').forEach(tr => tr.onclick = () => { R.sel = tr.dataset.cierre; renderResumenes(); window.scrollTo(0, 0); });
 }
 
+/** Lo que cruzó (o no) entre lo que cargaste con tarjeta y este resumen, con el período del resumen. Solo está si ese resumen se importó con la conciliación. */
+function htmlConciliacionGuardada(r) {
+  const c = r.conciliacion;
+  if (!c) return '';
+  const monedas = o => ['ARS', 'USD'].filter(m => o[m]).map(m => fmtMoney(o[m], m)).join(' + ') || fmtMoney(0, 'ARS');
+  const dif = ['ARS', 'USD'].filter(m => Math.abs((c.resumen[m] || 0) - (c.cargado[m] || 0)) > 0.005).map(m => {
+    const x = Math.round(((c.resumen[m] || 0) - (c.cargado[m] || 0)) * 100) / 100;
+    return (x > 0 ? '+ ' : '− ') + fmtMoney(Math.abs(x), m);
+  }).join(' · ') || 'sin diferencia';
+  const lista = (titulo, total, items, vacio) => '<details ' + (total ? 'open' : '') + ' style="margin-top:10px"><summary><b>' + esc(titulo) + '</b> <span class="mut">(' + total + ')</span></summary>' +
+    (total ? '<ul style="margin:8px 0 0;padding-left:20px">' + items.map(x => '<li>' + esc(fechaCorta(x.f).slice(0, 5)) + ' · ' + esc(x.d) + ' · <span class="mono">' + esc(fmtMoney(x.m, x.mon)) + '</span></li>').join('') + '</ul>' +
+      (total > items.length ? '<div class="mut small" style="margin-top:6px">Se muestran los primeros ' + items.length + ' de ' + total + '.</div>' : '') : '<div class="mut small" style="margin-top:6px">' + esc(vacio) + '</div>') + '</details>';
+  return '<div class="card cuerpo-c"><h2 class="titulo-c">Conciliación con lo que cargaste</h2>' +
+    '<div class="mut small" style="margin-bottom:8px">Período del resumen: ' + (c.desde ? esc(fechaCorta(c.desde).slice(0, 5)) + ' al ' : 'hasta el ') + esc(fechaCorta(c.hasta).slice(0, 5)) + (c.importado ? ' · importado el ' + esc(fechaCorta(c.importado)) : '') + '</div>' +
+    '<div class="dfila"><span class="n">Cargaste con tarjeta en el período</span><span class="mono">' + esc(monedas(c.cargado)) + '</span></div>' +
+    '<div class="dfila"><span class="n">Consumos del resumen</span><span class="mono">' + esc(monedas(c.resumen)) + '</span></div>' +
+    '<div class="dfila total"><span class="n"><b>Diferencia</b></span><span class="mono">' + esc(dif) + '</span></div>' +
+    '<div class="mut" style="font-weight:400;margin-top:10px">✓ <b style="color:var(--text)">' + c.coincidieron + '</b> coincidieron por monto' + (c.trasladados ? ' · ' + c.trasladados + (c.trasladados === 1 ? ' cargado después del cierre pasó' : ' cargados después del cierre pasaron') + ' al ciclo siguiente' : '') + '.</div>' +
+    lista('Cargaste y NO están en el resumen', c.nQuitados, c.quitados, 'Todo lo que cargaste está en el resumen.') +
+    lista('Están en el resumen y NO los habías cargado', c.nNuevas, c.nuevas, 'No hay consumos sin cargar.') + '</div>';
+}
+
 function renderDetalleResumen(r) {
   const ms = movsDe(r).slice().sort((a, b) => a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0);
   const kpi = (l, v, s) => '<div class="card kpi"><span class="l">' + l + '</span><span class="v">' + esc(v) + '</span><span class="s">' + esc(s) + '</span></div>';
@@ -1724,7 +1746,7 @@ function renderDetalleResumen(r) {
   }).join('');
   $('page').innerHTML =
     '<div><button class="mini" id="volverlista">← Resúmenes</button><h1 style="margin-top:14px">Resumen del ' + esc(fechaCorta(r.cierre)) + '</h1>' +
-    '<div class="mut" style="font-weight:400;margin-top:4px">' + esc(tarjetaCorta(r.tarjeta)) + (r.importado ? ' · importado el ' + esc(fechaCorta(r.importado)) : '') + '</div></div>' + kpis +
+    '<div class="mut" style="font-weight:400;margin-top:4px">' + esc(tarjetaCorta(r.tarjeta)) + (r.importado ? ' · importado el ' + esc(fechaCorta(r.importado)) : '') + '</div></div>' + kpis + htmlConciliacionGuardada(r) +
     '<div class="card tablewrap">' + (ms.length
       ? '<table><thead><tr><th>Fecha</th><th>Descripción</th><th>Categoría</th><th>Cuota</th><th class="r">Monto</th></tr></thead><tbody>' + filas + '</tbody></table>'
       : '<div class="vacio">No hay movimientos de este resumen en la planilla.</div>') + '</div>' +
