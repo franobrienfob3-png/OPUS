@@ -397,3 +397,5 @@ body.privado input[inputmode="decimal"]:not(:focus) { filter:blur(6px); }
 .opus-login__own .in { width:100%; }
 .opus-login__btns { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
 .opus-login__ayuda { font-size:13px; color:var(--muted); text-align:center; }
+.movt .saldocol { white-space:nowrap; }
+.movt th.saldocol { color:var(--muted); }

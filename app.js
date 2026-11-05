@@ -843,6 +843,30 @@ function mapasGastos() {
   return { cat, nat };
 }
 
+/** Lo que este movimiento suma o resta al saldo de una cuenta (null si no la toca). Igual que el saldo del Dashboard. */
+function deltaCuenta(m, cuenta) {
+  if (m.afecta !== 'Si') return null;
+  if (m.cuenta === cuenta) {
+    if (m.tipo === 'Ingreso' || m.tipo === 'Cobro Deuda' || m.tipo === 'Ajuste') return m.monto;
+    if (m.tipo === 'Gasto' || m.tipo === 'Pago Deuda' || m.tipo === 'Transferencia') return -m.monto;
+  }
+  if (m.tipo === 'Transferencia' && m.destino === cuenta) return Number(m.montoDestino) || m.monto;
+  return null;
+}
+
+/** Saldo de la cuenta después de cada movimiento: { porId, final }. Se arma con TODOS los movimientos (no solo con los que se ven) y en orden de fecha. */
+function saldosCorridos(cuenta) {
+  const orden = M.movs.map((m, i) => ({ m: m, i: i })).sort((a, b) => a.m.fecha < b.m.fecha ? -1 : a.m.fecha > b.m.fecha ? 1 : a.i - b.i);
+  const porId = {}; let saldo = 0;
+  orden.forEach(x => {
+    const dlt = deltaCuenta(x.m, cuenta);
+    if (dlt === null) return;
+    saldo = Math.round((saldo + dlt) * 100) / 100;
+    porId[x.m.id] = saldo;
+  });
+  return { porId: porId, final: saldo };
+}
+
 function enPeriodo(m, anio) {
   if (M.periodo === 'todo') return true;
   if (M.periodo === 'anio') return m.fecha.slice(0, 4) === anio;
@@ -891,17 +915,24 @@ function renderMovs() {
 
   // filtros de la tabla
   const q = M.q.trim().toLowerCase();
+  // con UNA cuenta elegida se ve su saldo después de cada movimiento; las transferencias que entran a la cuenta también figuran
+  const cuentaUnica = M.cuentas.length === 1 && S.data.cuentas.filas.some(f => f.v.Nombre === M.cuentas[0]) ? M.cuentas[0] : '';
+  const monCuenta = cuentaUnica ? S.data.cuentas.filas.filter(f => f.v.Nombre === cuentaUnica)[0].v.Moneda : '';
+  const sc = cuentaUnica ? saldosCorridos(cuentaUnica) : null;
   const filas = base.filter(m =>
-    (!M.cuentas.length || M.cuentas.indexOf(m.cuenta) >= 0) && (!M.tipos.length || M.tipos.indexOf(m.tipo) >= 0) &&
+    (!M.cuentas.length || M.cuentas.indexOf(m.cuenta) >= 0 || (m.tipo === 'Transferencia' && M.cuentas.indexOf(m.destino) >= 0)) && (!M.tipos.length || M.tipos.indexOf(m.tipo) >= 0) &&
     (!M.cat || (m.tipo === 'Gasto' && grupoCat(m) === M.cat)) &&
     (!q || (m.desc + ' ' + m.subcategoria + ' ' + m.cuenta + ' ' + m.asignado).toLowerCase().indexOf(q) >= 0));
   const sentido = d => (M.desc ? -1 : 1) * d;
-  filas.sort((a, b) => M.campo === 'monto' ? sentido(a.monto - b.monto) : sentido(a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0));
+  const posicion = new Map(M.movs.map((m, i) => [m.id, i]));   // mismo día: el orden en que se cargaron (el último arriba si va de más nuevo a más viejo)
+  filas.sort((a, b) => M.campo === 'monto' ? sentido(a.monto - b.monto) : sentido(a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : posicion.get(a.id) - posicion.get(b.id)));
 
-  const cuentasBase = Array.from(new Set(base.map(m => m.cuenta))).sort();
+  const cuentasBase = Array.from(new Set(base.reduce((a, m) => a.concat([m.cuenta, m.tipo === 'Transferencia' ? m.destino : '']), []).filter(Boolean))).sort();
   const tiposBase = Array.from(new Set(base.map(m => m.tipo)));
   const neto = mon => filas.filter(m => m.moneda === mon).reduce((s, m) => s + (m.tipo === 'Ingreso' ? m.monto : m.tipo === 'Gasto' ? -m.monto : 0), 0);
   const netoARS = neto('ARS'), netoUSD = neto('USD');
+  const netoCuenta = cuentaUnica ? filas.reduce((s, m) => { const dlt = deltaCuenta(m, cuentaUnica); return dlt === null ? s : s + dlt; }, 0) : 0;
+  const conSigno = (n, mon) => (n < 0 ? '− ' : n > 0 ? '+ ' : '') + fmtMoney(Math.abs(n), mon);
 
   const periodos = meses.slice(0, 4).map(ym => [ym, nombreMes(ym)]).concat([['anio', 'Año ' + anio], ['todo', 'Todo']]);
   const kpi = (l, v, s, color) => '<div class="card kpi"><span class="l">' + l + '</span><span class="v" ' + (color ? 'style="color:' + color + '"' : '') + '>' + esc(v) + '</span><span class="s">' + esc(s) + '</span></div>';
@@ -914,17 +945,24 @@ function renderMovs() {
   const filasHtml = filas.slice(0, M.limite).map(m => {
     const esGasto = m.tipo === 'Gasto', esIng = m.tipo === 'Ingreso';
     const catTxt = esGasto ? esc(m.subcategoria) : (m.tipo === 'Transferencia' ? esc(m.cuenta) + ' → ' + esc(m.destino) : (m.asignado ? '→ ' + esc(m.asignado) : (m.subcategoria ? esc(m.subcategoria) : '—')));
+    const entra = !!cuentaUnica && m.tipo === 'Transferencia' && m.destino === cuentaUnica && m.cuenta !== cuentaUnica;   // transferencia que entra a la cuenta elegida
+    const sale = !!cuentaUnica && m.tipo === 'Transferencia' && m.cuenta === cuentaUnica;
+    const textoMonto = entra ? '+ ' + fmtMoney(Number(m.montoDestino) || m.monto, monCuenta)
+      : (sale || esGasto || (cuentaUnica && m.tipo === 'Pago Deuda') ? '− ' : esIng || (cuentaUnica && m.tipo === 'Cobro Deuda') ? '+ ' : (m.tipo === 'Ajuste' ? (m.monto < 0 ? '− ' : '+ ') : '')) + fmtMoney(Math.abs(m.monto), m.moneda);
+    const s = sc ? sc.porId[m.id] : undefined;
+    const celdaSaldo = sc ? '<td class="r mono saldocol">' + (s === undefined ? '<span class="mut">—</span>' : esc((s < 0 ? '− ' : '') + fmtMoney(Math.abs(s), monCuenta))) + '</td>' : '';
     return '<tr data-id="' + esc(m.id) + '"><td class="mono mut">' + esc(fechaCorta(m.fecha).slice(0, 5)) + '</td><td class="desc">' + esc(m.desc) +
       (m.cuota ? ' <span class="tag">cuota ' + esc(m.cuota) + '</span>' : '') + (esProvisorio(m) ? ' <span class="tag">provisorio</span>' : '') + '</td><td><span class="dot" style="background:' + (esGasto ? colorDeCat(grupoCat(m)) : 'var(--border-strong)') + '"></span>' + catTxt +
-      '</td><td class="mut cuentacol">' + esc(m.cuenta) + '</td><td class="mut tipocol">' + esc(m.tipo) + '</td><td class="r mono ' + (esGasto ? 'neg' : '') + '">' +
-      (esGasto ? '− ' : esIng ? '+ ' : (m.tipo === 'Ajuste' ? (m.monto < 0 ? '− ' : '+ ') : '')) + esc(fmtMoney(Math.abs(m.monto), m.moneda)) + '</td></tr>';
+      '</td><td class="mut cuentacol">' + esc(entra ? cuentaUnica : m.cuenta) + '</td><td class="mut tipocol">' + esc(m.tipo) + '</td><td class="r mono ' + (esGasto || sale || (cuentaUnica && m.tipo === 'Pago Deuda') ? 'neg' : '') + '">' +
+      esc(textoMonto) + '</td>' + celdaSaldo + '</tr>';
   }).join('');
 
   const flecha = campo => M.campo === campo ? (M.desc ? ' ▼' : ' ▲') : '';
   const tabla = filas.length
-    ? '<table class="movt"><thead><tr><th class="ord" data-ord="fecha">Fecha' + flecha('fecha') + '</th><th>Descripción</th><th>Categoría</th><th class="cuentacol">Cuenta</th><th class="tipocol">Tipo</th><th class="r ord neg" data-ord="monto">Monto' + flecha('monto') + '</th></tr></thead><tbody>' + filasHtml + '</tbody></table>' +
+    ? '<table class="movt"><thead><tr><th class="ord" data-ord="fecha">Fecha' + flecha('fecha') + '</th><th>Descripción</th><th>Categoría</th><th class="cuentacol">Cuenta</th><th class="tipocol">Tipo</th><th class="r ord neg" data-ord="monto">Monto' + flecha('monto') + '</th>' + (sc ? '<th class="r saldocol">Saldo</th>' : '') + '</tr></thead><tbody>' + filasHtml + '</tbody></table>' +
       (filas.length > M.limite ? '<div style="padding:14px;text-align:center"><button class="btn" id="mas">Mostrar más (' + (filas.length - M.limite) + ')</button></div>' : '') +
-      '<div class="neto"><span class="mut">Neto filtrado</span><span class="mono">' + (netoARS < 0 ? '− ' : '+ ') + esc(fmtMoney(Math.abs(netoARS), 'ARS')) + (netoUSD ? '  ·  ' + (netoUSD < 0 ? '− ' : '+ ') + esc(fmtMoney(Math.abs(netoUSD), 'USD')) : '') + '</span></div>'
+      (cuentaUnica ? '<div class="neto"><span class="mut">Saldo actual de ' + esc(cuentaUnica) + '</span><span class="mono">' + esc((sc.final < 0 ? '− ' : '') + fmtMoney(Math.abs(sc.final), monCuenta)) + '</span></div>' : '') +
+      '<div class="neto"><span class="mut">Neto filtrado</span><span class="mono">' + (cuentaUnica ? esc(conSigno(netoCuenta, monCuenta)) : (netoARS < 0 ? '− ' : '+ ') + esc(fmtMoney(Math.abs(netoARS), 'ARS')) + (netoUSD ? '  ·  ' + (netoUSD < 0 ? '− ' : '+ ') + esc(fmtMoney(Math.abs(netoUSD), 'USD')) : '')) + '</span></div>'
     : '<div class="vacio">Sin movimientos para estos filtros<div style="margin-top:14px"><button class="btn" id="limpiar">Limpiar filtros</button></div></div>';
 
   $('page').innerHTML =
