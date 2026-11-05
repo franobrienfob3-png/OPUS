@@ -1,4 +1,4 @@
-﻿const $ = id => document.getElementById(id);
+const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -565,7 +565,8 @@ const esSinCat = f => f.clase !== 'pago' && !dupEf(f) && !I.dec[f.i].omitir && !
 function prepararDecisiones() {
   I.dec = {};
   I.a.filas.forEach(f => {
-    I.dec[f.i] = { omitir: f.dup, sub: f.sug ? f.sug.subcategoria : '', asig: f.sug ? f.sug.asignarA : '', rec: false, txt: textoSugerido(f.desc) };
+    const c = f.conc;   // si coincide con algo que cargaste, queda con tu categoría; si no, con la que sugieren las reglas
+    I.dec[f.i] = { omitir: f.dup, sub: c && c.subcategoria ? c.subcategoria : (f.sug ? f.sug.subcategoria : ''), asig: c && c.asignado ? c.asignado : (f.sug ? f.sug.asignarA : ''), rec: false, txt: textoSugerido(f.desc) };
   });
   I.tarjeta = I.a.tarjetas.length ? I.a.tarjetas[0].numero : '';
 }
@@ -618,6 +619,9 @@ function htmlResultado() {
     (r.historico ? ', marcados como histórico (no cambian saldos).' : '.') +
     (r.reemplazados ? ' Se reemplazaron ' + r.reemplazados + ' movimientos que ya estaban importados de este resumen.' : '') +
     (r.provisoriosBorrados ? ' Se quitaron ' + r.provisoriosBorrados + ' movimientos provisorios del ciclo, que ahora vienen con el resumen oficial.' : '') +
+    (r.conciliacion && (r.conciliacion.coincidieron || r.conciliacion.nQuitados || r.conciliacion.trasladados) ? ' <b style="color:var(--text)">Conciliación:</b> ' + r.conciliacion.coincidieron + ' coincidieron con lo que habías cargado (conservan tu categoría y nota)' +
+      (r.conciliacion.nQuitados ? '; ' + r.conciliacion.nQuitados + (r.conciliacion.nQuitados === 1 ? ' cargado no aparecía' : ' cargados no aparecían') + ' en el resumen: ' + r.conciliacion.quitados.slice(0, 5).map(x => esc(x.desc) + ' ' + esc(fmtMoney(x.monto, x.moneda))).join(', ') + (r.conciliacion.nQuitados > 5 ? '…' : '') : '') +
+      (r.conciliacion.trasladados ? '; ' + r.conciliacion.trasladados + (r.conciliacion.trasladados === 1 ? ' cargado después del cierre pasó' : ' cargados después del cierre pasaron') + ' al ciclo siguiente' : '') + '.' : '') +
     (r.resumenNuevo ? ' La cabecera del resumen (saldos y lo arrastrado) quedó registrada en la pestaña <b style="color:var(--text)">Resumenes</b>.' : '') + '</p>' +
     '<div style="display:flex;gap:8px;margin-top:20px"><button class="btn primary" id="otro">Importar otro resumen</button>' +
     '<button class="btn" id="verreglas">Ver reglas</button></div></div>';
@@ -638,7 +642,7 @@ function htmlRevision() {
       : '<span class="mut" style="font-weight:400">Tarjeta: <b style="color:var(--text)">' + esc(a.tarjetas[0].ARS || a.tarjetas[0].USD) + '</b></span>')
     : '<span class="bad">No hay una tarjeta cargada en DDMM.</span>';
 
-  return '<div class="kpis">' + kpis + '</div>' + htmlOmitidas() +
+  return '<div class="kpis">' + kpis + '</div>' + htmlConciliacion() + htmlOmitidas() +
     '<div class="card opts">' + tarjetas +
     '<label><input type="checkbox" id="hist" ' + (I.historico ? 'checked' : '') + '> Importar como histórico (no cambia saldos)</label>' +
     (a.filas.some(f => f.dup) ? '<label><input type="checkbox" id="reemp" ' + (I.reemplazar ? 'checked' : '') + '> Reemplazar lo que ya importé de este resumen <span class="mut" style="font-weight:400">(se rehace con las reglas actuales; se pierden los cambios manuales de esos movimientos)</span></label>' : '') +
@@ -646,10 +650,32 @@ function htmlRevision() {
     '<div class="toolbar"><button class="pill ' + (I.filtro === 'todos' ? 'on' : '') + '" data-f="todos">Todos <small>' + a.filas.length + '</small></button>' +
     '<button class="pill ' + (I.filtro === 'sin' ? 'on' : '') + '" data-f="sin" id="chip-sin">Sin categorizar</button>' +
     '<button class="pill ' + (I.filtro === 'dup' ? 'on' : '') + '" data-f="dup">Ya importados <small>' + a.filas.filter(f => f.dup).length + '</small></button>' +
+    (a.conciliacion && a.conciliacion.hay ? '<button class="pill ' + (I.filtro === 'nuevas' ? 'on' : '') + '" data-f="nuevas">Sin cargar <small>' + a.conciliacion.nuevas + '</small></button>' : '') +
     '<div class="search" style="margin-left:8px"><span class="lupa"></span><input id="iq" placeholder="Buscar…" value="' + esc(I.q) + '"></div></div>' +
     '<div class="card tablewrap" id="imptabla"></div>' +
     '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn primary" id="impconf">Importar</button>' +
     '<button class="btn" id="otro">Cancelar</button><a href="#" id="verreglas" class="mut" style="margin-left:auto;color:var(--muted)">Ver reglas</a></div>';
+}
+
+/** Compara lo que cargaste con tarjeta contra lo que trae el resumen: cuánto, qué cruzó por monto, qué falta de un lado y del otro. */
+function htmlConciliacion() {
+  const c = I.a && I.a.conciliacion;
+  if (!c || !c.hay) return '';
+  const monedas = o => ['ARS', 'USD'].filter(m => o[m]).map(m => fmtMoney(o[m], m)).join(' + ') || fmtMoney(0, 'ARS');
+  const dif = ['ARS', 'USD'].filter(m => Math.abs((c.resumen[m] || 0) - (c.cargado[m] || 0)) > 0.005).map(m => {
+    const x = Math.round(((c.resumen[m] || 0) - (c.cargado[m] || 0)) * 100) / 100;
+    return (x > 0 ? '+ ' : '− ') + fmtMoney(Math.abs(x), m);
+  }).join(' · ') || 'sin diferencia';
+  const sin = c.sinCruce.length
+    ? '<details style="margin-top:8px"><summary>' + c.nSinCruce + (c.nSinCruce === 1 ? ' movimiento que cargaste no aparece' : ' movimientos que cargaste no aparecen') + ' en el resumen (se reemplazan por el oficial)</summary><ul class="mut" style="margin:8px 0 0;font-weight:400">' +
+      c.sinCruce.map(x => '<li>' + esc(fechaCorta(x.fecha).slice(0, 5)) + ' · ' + esc(x.desc) + ' · ' + esc(fmtMoney(x.monto, x.moneda)) + '</li>').join('') + '</ul></details>' : '';
+  return '<div class="card cuerpo-c"><h2 class="titulo-c">Conciliación con lo que cargaste</h2>' +
+    '<div class="dfila"><span class="n">Cargaste con tarjeta en este ciclo</span><span class="mono">' + esc(monedas(c.cargado)) + '</span></div>' +
+    '<div class="dfila"><span class="n">Consumos del resumen</span><span class="mono">' + esc(monedas(c.resumen)) + '</span></div>' +
+    '<div class="dfila total"><span class="n"><b>Diferencia</b></span><span class="mono">' + esc(dif) + '</span></div>' +
+    '<div class="mut" style="font-weight:400;margin-top:10px">✓ <b style="color:var(--text)">' + c.coincidieron + '</b> coinciden por monto: conservan tu categoría y tu nota. ' +
+    (c.nuevas ? '<b style="color:var(--text)">' + c.nuevas + '</b> del resumen no los habías cargado (filtro “Sin cargar”). ' : '') +
+    (c.siguientes ? c.siguientes + (c.siguientes === 1 ? ' movimiento cargado' : ' movimientos cargados') + ' después del cierre pasa' + (c.siguientes === 1 ? '' : 'n') + ' al ciclo siguiente.' : '') + '</div>' + sin + '</div>';
 }
 
 function htmlOmitidas() {
@@ -691,6 +717,7 @@ function filaImp(f) {
   const monto = fmtMoneyRaw(f.monto, f.moneda === 'USD' ? 'USD' : 'ARS');
   const comun = '<td class="mono mut">' + esc(fechaCorta(f.fecha).slice(0, 5)) + '</td><td>' + esc(f.desc) +
     (f.cuota ? ' <span class="tag">cuota ' + esc(f.cuota) + '</span>' : '') + (dupEf(f) ? ' <span class="tag">ya importado</span>' : '') +
+    (f.conc && !dupEf(f) ? ' <span class="tag" title="Coincide por monto con lo que cargaste el ' + esc(fechaCorta(f.conc.fecha).slice(0, 5)) + ': ' + esc(f.conc.nota || f.conc.desc) + '">✓ lo cargaste' + (f.conc.nota ? ': ' + esc(f.conc.nota.slice(0, 30)) : '') + '</span>' : '') +
     '</td><td class="r mono">' + esc(monto) + '</td>';
   const omitir = '<td><label class="rec"><input type="checkbox" data-k="omitir" ' + (d.omitir ? 'checked' : '') + (dupEf(f) ? ' disabled' : '') + '> Omitir</label></td>';
   if (f.clase === 'pago') {
@@ -706,7 +733,7 @@ function filaImp(f) {
 function renderTablaImp() {
   const q = I.q.trim().toLowerCase();
   const filas = I.a.filas.filter(f =>
-    (I.filtro === 'todos' || (I.filtro === 'sin' && esSinCat(f)) || (I.filtro === 'dup' && f.dup)) &&
+    (I.filtro === 'todos' || (I.filtro === 'sin' && esSinCat(f)) || (I.filtro === 'dup' && f.dup) || (I.filtro === 'nuevas' && f.clase === 'consumo' && !f.dup && !f.conc)) &&
     (!q || (f.desc + ' ' + f.fecha).toLowerCase().indexOf(q) >= 0));
   $('imptabla').innerHTML = filas.length
     ? '<table class="imp"><thead><tr><th>Fecha</th><th>Descripción</th><th class="r">Monto</th><th>Categoría</th><th>Asignar a</th><th>Recordar</th><th></th></tr></thead><tbody>' +
@@ -738,7 +765,7 @@ async function confirmarImp() {
       ? await llamar('confirmarCiclo', I.items, I.tarjeta, decisiones)
       : await llamar('confirmarImportacion', I.texto, I.tarjeta, decisiones, { historico: I.historico, importarIgual: I.importarIgual, reemplazar: I.reemplazar });
     S.data = res.data; S.rev = res.revisiones; M.movs = null;
-    I.resultado = { importados: res.importados, omitidos: res.omitidos, duplicados: res.duplicados, reglasNuevas: res.reglasNuevas, resumenNuevo: res.resumenNuevo, reemplazados: res.reemplazados, historico: I.historico, quitados: res.quitados, pagosIgnorados: res.pagosIgnorados, provisoriosBorrados: res.provisoriosBorrados };
+    I.resultado = { importados: res.importados, omitidos: res.omitidos, duplicados: res.duplicados, reglasNuevas: res.reglasNuevas, resumenNuevo: res.resumenNuevo, reemplazados: res.reemplazados, historico: I.historico, quitados: res.quitados, pagosIgnorados: res.pagosIgnorados, provisoriosBorrados: res.provisoriosBorrados, conciliacion: res.conciliacion };
   } catch (e) { I.error = (e && e.message) || 'No se pudo importar'; }
   renderImportar();
   if (I.error) window.scrollTo(0, 0);
