@@ -712,11 +712,22 @@ function selAsig(actual) {
     '<optgroup label="Deudas">' + deudas.map(s => op(s, actual)).join('') + '</optgroup></select>';
 }
 
+/** Si la línea se asigna a una deuda "Por Cobrar" que vale menos que la línea, el resumen la divide: lo que te deben y tu parte (gasto). */
+function divisionPorCobrar(f, asig) {
+  if (!asig || f.clase !== 'consumo') return null;
+  const dd = ((S.data.deudas || {}).filas || []).filter(x => x.v.Nombre === asig && x.v.Tipo === 'Por Cobrar')[0];
+  if (!dd) return null;
+  const valor = Number(dd.v.Valor) || 0, mon = f.moneda === 'USD' ? 'USD' : 'ARS';
+  if (dd.v.Moneda !== mon || !(valor > 0) || Math.round((f.monto - valor) * 100) / 100 <= 0.01) return null;
+  return { debenA: valor, mia: Math.round((f.monto - valor) * 100) / 100, mon };
+}
+
 function filaImp(f) {
   const d = I.dec[f.i];
   const monto = fmtMoneyRaw(f.monto, f.moneda === 'USD' ? 'USD' : 'ARS');
   const comun = '<td class="mono mut">' + esc(fechaCorta(f.fecha).slice(0, 5)) + '</td><td>' + esc(f.desc) +
     (f.cuota ? ' <span class="tag">cuota ' + esc(f.cuota) + '</span>' : '') + (dupEf(f) ? ' <span class="tag">ya importado</span>' : '') +
+    (() => { const dv = dupEf(f) ? null : divisionPorCobrar(f, d.asig); return dv ? ' <span class="tag" title="Se carga una parte como lo que te deben (adelanto) y el resto como tu gasto">se divide: te deben ' + esc(fmtMoneyRaw(dv.debenA, dv.mon)) + ' · tu parte ' + esc(fmtMoneyRaw(dv.mia, dv.mon)) + '</span>' : ''; })() +
     (f.conc && !dupEf(f) ? ' <span class="tag" title="Coincide por monto con lo que cargaste el ' + esc(fechaCorta(f.conc.fecha).slice(0, 5)) + ': ' + esc(f.conc.nota || f.conc.desc) + '">✓ lo cargaste' + (f.conc.nota ? ': ' + esc(f.conc.nota.slice(0, 30)) : '') + '</span>' : '') +
     '</td><td class="r mono">' + esc(monto) + '</td>';
   const omitir = '<td><label class="rec"><input type="checkbox" data-k="omitir" ' + (d.omitir ? 'checked' : '') + (dupEf(f) ? ' disabled' : '') + '> Omitir</label></td>';
